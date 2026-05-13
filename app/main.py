@@ -104,9 +104,59 @@ def init_db():
         )
     """)
 
-    # 第六階段：新增 status 欄位（向下相容）
+    # 第六階段：新增 status 欄位
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'APPROVED'")
     cur.execute("ALTER TABLE enterprises ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'APPROVED'")
+
+    # 第七階段：資料庫擴充
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS personal_points DECIMAL(15,2) DEFAULT 0.00")
+    cur.execute("""
+        ALTER TABLE assets
+            ADD COLUMN IF NOT EXISTS publish_category VARCHAR(30) DEFAULT 'MATERIAL',
+            ADD COLUMN IF NOT EXISTS associated_asset_id UUID,
+            ADD COLUMN IF NOT EXISTS ai_script TEXT
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS point_distributions (
+            distribution_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            enterprise_id   UUID REFERENCES enterprises(enterprise_id),
+            from_admin_id   UUID REFERENCES users(user_id),
+            to_user_id      UUID REFERENCES users(user_id),
+            amount          DECIMAL(15,2) NOT NULL,
+            note            TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS enterprise_benefits (
+            benefit_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            enterprise_id   UUID REFERENCES enterprises(enterprise_id),
+            title           VARCHAR(255) NOT NULL,
+            description     TEXT,
+            benefit_type    VARCHAR(50) DEFAULT 'PRODUCT',
+            price_points    DECIMAL(15,2) DEFAULT 0,
+            image_url       TEXT,
+            stock           INT DEFAULT -1,
+            is_active       BOOLEAN DEFAULT true,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS benefit_redemptions (
+            redemption_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            benefit_id      UUID REFERENCES enterprise_benefits(benefit_id),
+            user_id         UUID REFERENCES users(user_id),
+            redemption_code VARCHAR(50) UNIQUE NOT NULL,
+            status          VARCHAR(20) DEFAULT 'ACTIVE',
+            external_ref    VARCHAR(255),
+            external_platform VARCHAR(100),
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            used_at         TIMESTAMP
+        )
+    """)
     
     cur.execute("SELECT user_id FROM users WHERE username = 'admin'")
     if not cur.fetchone():
@@ -161,9 +211,33 @@ class LogisticsRequest(BaseModel):
     address: str
 
 class GenerateCreativeRequest(BaseModel):
-    asset_id: str = ""          # 已上架圖片資產 ID（可選）
+    asset_id: str = ""
     prompt: str
-    output_type: str = "VIDEO"  # VIDEO 或 ECARD
+    output_type: str = "VIDEO"
+
+# --- 第七階段資料模型 ---
+class DistributePointsRequest(BaseModel):
+    to_user_id: str
+    amount: float
+    note: str = ""
+
+class PersonalTopUpRequest(BaseModel):
+    amount: float
+    description: str = "員工自購點數"
+
+class BenefitCreateRequest(BaseModel):
+    title: str
+    description: str = ""
+    benefit_type: str = "PRODUCT"
+    price_points: float = 0.0
+    stock: int = -1
+
+class BenefitUpdateRequest(BaseModel):
+    title: str = ""
+    description: str = ""
+    price_points: float = -1
+    stock: int = -99
+    is_active: bool = True
 
 # --- API ---
 @app.post("/api/auth/login")
@@ -654,6 +728,413 @@ async def download_asset(asset_id: str, current_user = Depends(get_current_user)
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
 
+# ============================================================
+# 第七階段 API
+# ============================================================
+
+# --- 點數分配系統 ---
+
+@app.get("/api/enterprise/members")
+async def get_enterprise_members(current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT user_id, username, user_role, phone_number, personal_points, status, created_at
+            FROM users WHERE enterprise_id = %s::uuid ORDER BY created_at ASC
+        """, (ent_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.post("/api/enterprise/distribute-points")
+async def distribute_points(req: DistributePointsRequest, current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    admin_id = current_user.get("user_id")
+    if not ent_id: raise HTTPException(status_code=403, detail="需要企業管理員權限")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # 確認目標員工屬於同一企業
+        cur.execute("SELECT user_id, username FROM users WHERE user_id = %s::uuid AND enterprise_id = %s::uuid", (req.to_user_id, ent_id))
+        target = cur.fetchone()
+        if not target: raise HTTPException(status_code=404, detail="找不到此員工或員工不屬於您的企業")
+        # 從企業錢包扣款
+        cur.execute("SELECT wallet_id, balance FROM wallets WHERE owner_id = %s::uuid", (ent_id,))
+        wallet = cur.fetchone()
+        if not wallet or float(wallet['balance']) < req.amount:
+            raise HTTPException(status_code=400, detail=f"企業錢包餘額不足，目前僅有 {wallet['balance'] if wallet else 0} 點")
+        cur.execute("UPDATE wallets SET balance = balance - %s WHERE wallet_id = %s", (req.amount, wallet['wallet_id']))
+        # 增加員工個人點數
+        cur.execute("UPDATE users SET personal_points = personal_points + %s WHERE user_id = %s::uuid", (req.amount, req.to_user_id))
+        # 寫入分配紀錄
+        cur.execute("""
+            INSERT INTO point_distributions (enterprise_id, from_admin_id, to_user_id, amount, note)
+            VALUES (%s::uuid, %s::uuid, %s::uuid, %s, %s)
+        """, (ent_id, admin_id, req.to_user_id, req.amount, req.note))
+        conn.commit()
+        return {"status": "success", "message": f"已成功分配 {req.amount} 點給 {target['username']}"}
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/enterprise/distribution-log")
+async def get_distribution_log(current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT pd.distribution_id, pd.amount, pd.note, pd.created_at,
+                   a.username as admin_name, u.username as user_name
+            FROM point_distributions pd
+            JOIN users a ON pd.from_admin_id = a.user_id
+            JOIN users u ON pd.to_user_id = u.user_id
+            WHERE pd.enterprise_id = %s::uuid ORDER BY pd.created_at DESC LIMIT 100
+        """, (ent_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/users/my-points")
+async def get_my_points(current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT personal_points FROM users WHERE user_id = %s::uuid", (user_id,))
+        row = cur.fetchone()
+        return {"status": "success", "personal_points": float(row['personal_points']) if row else 0}
+    finally: cur.close(); conn.close()
+
+@app.post("/api/users/self-topup")
+async def self_topup(req: PersonalTopUpRequest, current_user = Depends(get_current_user)):
+    """員工自行用現金購買個人點數"""
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("UPDATE users SET personal_points = personal_points + %s WHERE user_id = %s::uuid", (req.amount, user_id))
+        conn.commit()
+        return {"status": "success", "message": f"個人點數儲值 {req.amount} 點成功"}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+# --- 三軌上架：軌道 A 素材真實上傳 ---
+
+@app.post("/api/upload/material")
+async def upload_material(
+    file: UploadFile = File(...),
+    current_user = Depends(require_enterprise_admin)
+):
+    """真實 multipart 素材上傳，儲存後送 Gemini AI 審核"""
+    ent_id = current_user.get("enterprise_id") or TEST_ENTERPRISE_ID
+    import shutil
+    new_asset_id = str(uuid.uuid4())
+    ext = os.path.splitext(file.filename)[1] if file.filename else ".bin"
+    save_filename = f"{new_asset_id}{ext}"
+    save_path = os.path.join(DONE_PATH, save_filename)
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        with open(save_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        is_passed = False; ai_score = 0; reason = "審核中"; category = "IMAGE"
+        summary = ""; seo_tags = []; ai_metadata = {}
+        try:
+            img = PIL.Image.open(save_path)
+            prompt = "請分析這張圖片作為企業共享資源素材的適合度。請以 JSON 格式回應，包含 is_passed, score, reason, category, summary, seo_tags"
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[img, prompt],
+                config={"response_mime_type": "application/json"}
+            )
+            res = json.loads(response.text)
+            is_passed = res.get('is_passed', False)
+            ai_score  = res.get('score', 0)
+            reason    = res.get('reason', '')
+            category  = res.get('category', 'IMAGE')
+            summary   = res.get('summary', '')
+            seo_tags  = res.get('seo_tags', [])
+            ai_metadata = res
+        except Exception as e:
+            reason = str(e)
+
+        cur.execute("""INSERT INTO assets (asset_id, owner_enterprise_id, asset_type, title, content_url, contribution_pts_reward, publish_category)
+            VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'MATERIAL')""",
+            (new_asset_id, ent_id, category, file.filename or save_filename, save_path, 50.0))
+        status_val = 'COMPLETED' if is_passed else 'REJECTED'
+        cur.execute("""INSERT INTO assets_log (asset_id, is_passed, reason, ai_score, ai_metadata, ai_tags, ai_analysis, status, asset_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (new_asset_id, is_passed, reason, ai_score, json.dumps(ai_metadata), json.dumps(seo_tags), summary, status_val, category))
+        if is_passed:
+            cur.execute("UPDATE wallets SET balance = balance + 50 WHERE owner_id = %s::uuid", (ent_id,))
+            cur.execute("INSERT INTO contribution_log (enterprise_id, asset_id, contribution_type, reward_points) VALUES (%s::uuid, %s::uuid, 'CONTENT_CONTRIBUTION', 50)", (ent_id, new_asset_id))
+        conn.commit()
+        return {"status": "success", "asset_id": new_asset_id, "is_passed": is_passed, "ai_score": ai_score, "reason": reason}
+    except Exception as e:
+        conn.rollback()
+        if os.path.exists(save_path): os.remove(save_path)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+# --- 三軌上架：軌道 B AI 創意內容 ---
+
+@app.post("/api/upload/creative")
+async def upload_creative(
+    file: UploadFile = File(...),
+    title: str = "AI 創意作品",
+    asset_type: str = "VIDEO_AD",
+    required_points: float = 100.0,
+    associated_asset_id: str = "",
+    ai_script: str = "",
+    current_user = Depends(require_enterprise_admin)
+):
+    """AI 創意成品上傳（形象影片/電子賀卡/線上課程），扣 AI 診斷費後直接發布"""
+    ent_id = current_user.get("enterprise_id") or TEST_ENTERPRISE_ID
+    import shutil
+    new_asset_id = str(uuid.uuid4())
+    ext = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
+    save_filename = f"{new_asset_id}{ext}"
+    save_path = os.path.join(DONE_PATH, save_filename)
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT wallet_id, balance FROM wallets WHERE owner_id = %s::uuid", (ent_id,))
+        wallet = cur.fetchone()
+        if not wallet or float(wallet['balance']) < AI_DIAGNOSTIC_FEE:
+            raise HTTPException(status_code=400, detail=f"企業錢包餘額不足，需要 {AI_DIAGNOSTIC_FEE} 點 AI 診斷費")
+        with open(save_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        # 扣除 AI 診斷費
+        cur.execute("UPDATE wallets SET balance = balance - %s WHERE wallet_id = %s", (AI_DIAGNOSTIC_FEE, wallet['wallet_id']))
+        cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (AI_DIAGNOSTIC_FEE, PLATFORM_WALLET_OWNER_ID))
+        cur.execute("""INSERT INTO wallet_transactions (from_wallet_id, to_wallet_id, amount, transaction_type, description)
+            VALUES (%s, (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid), %s, 'FEE', 'AI創意內容診斷費')""",
+            (wallet['wallet_id'], PLATFORM_WALLET_OWNER_ID, AI_DIAGNOSTIC_FEE))
+        # 直接上架
+        assoc_id = associated_asset_id if associated_asset_id else None
+        cur.execute("""INSERT INTO assets (asset_id, owner_enterprise_id, asset_type, title, content_url, required_points, publish_category, associated_asset_id, ai_script)
+            VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'CREATIVE', %s, %s)""",
+            (new_asset_id, ent_id, asset_type, title, save_path, required_points, assoc_id, ai_script))
+        cur.execute("""INSERT INTO assets_log (asset_id, is_passed, reason, ai_score, status, asset_type, is_archived)
+            VALUES (%s, true, 'AI創意成品直接上架', 100, 'COMPLETED', %s, true)""",
+            (new_asset_id, asset_type))
+        conn.commit()
+        return {"status": "success", "asset_id": new_asset_id, "message": "創意內容已上架，AI 診斷費已扣除"}
+    except HTTPException: raise
+    except Exception as e:
+        conn.rollback()
+        if os.path.exists(save_path): os.remove(save_path)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+# --- 三軌上架：軌道 C 企業福利品 ---
+
+@app.post("/api/benefits")
+async def create_benefit(
+    file: UploadFile = File(None),
+    title: str = "",
+    description: str = "",
+    benefit_type: str = "PRODUCT",
+    price_points: float = 0.0,
+    stock: int = -1,
+    current_user = Depends(require_enterprise_admin)
+):
+    ent_id = current_user.get("enterprise_id")
+    if not ent_id: raise HTTPException(status_code=403, detail="需要企業帳號")
+    import shutil
+    image_url = None
+    if file and file.filename:
+        ext = os.path.splitext(file.filename)[1]
+        fname = f"benefit_{uuid.uuid4()}{ext}"
+        fpath = os.path.join(DONE_PATH, fname)
+        with open(fpath, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        image_url = fpath
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""INSERT INTO enterprise_benefits (enterprise_id, title, description, benefit_type, price_points, image_url, stock)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, %s) RETURNING benefit_id""",
+            (ent_id, title, description, benefit_type, price_points, image_url, stock))
+        bid = cur.fetchone()['benefit_id']
+        conn.commit()
+        return {"status": "success", "benefit_id": str(bid)}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/benefits")
+async def list_benefits():
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""SELECT b.*, e.company_name FROM enterprise_benefits b
+            JOIN enterprises e ON b.enterprise_id = e.enterprise_id
+            WHERE b.is_active = true ORDER BY b.created_at DESC""")
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/benefits/mine")
+async def my_benefits(current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT * FROM enterprise_benefits WHERE enterprise_id = %s::uuid ORDER BY created_at DESC", (ent_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.put("/api/benefits/{benefit_id}")
+async def update_benefit(benefit_id: str, req: BenefitUpdateRequest, current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        updates, params = [], []
+        if req.title: updates.append("title = %s"); params.append(req.title)
+        if req.description: updates.append("description = %s"); params.append(req.description)
+        if req.price_points >= 0: updates.append("price_points = %s"); params.append(req.price_points)
+        if req.stock != -99: updates.append("stock = %s"); params.append(req.stock)
+        updates.append("is_active = %s"); params.append(req.is_active)
+        params.extend([benefit_id, ent_id])
+        cur.execute(f"UPDATE enterprise_benefits SET {', '.join(updates)} WHERE benefit_id = %s::uuid AND enterprise_id = %s::uuid", params)
+        conn.commit()
+        return {"status": "success"}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.delete("/api/benefits/{benefit_id}")
+async def delete_benefit(benefit_id: str, current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("UPDATE enterprise_benefits SET is_active = false WHERE benefit_id = %s::uuid AND enterprise_id = %s::uuid", (benefit_id, ent_id))
+        conn.commit()
+        return {"status": "success", "message": "福利品已下架"}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.post("/api/benefits/{benefit_id}/redeem")
+async def redeem_benefit(benefit_id: str, current_user = Depends(get_current_user)):
+    """員工用個人點數兌換福利品，生成兌換碼"""
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT * FROM enterprise_benefits WHERE benefit_id = %s::uuid AND is_active = true", (benefit_id,))
+        benefit = cur.fetchone()
+        if not benefit: raise HTTPException(status_code=404, detail="福利品不存在或已下架")
+        if benefit['stock'] == 0: raise HTTPException(status_code=400, detail="此福利品已售罄")
+        # 檢查個人點數
+        cur.execute("SELECT personal_points FROM users WHERE user_id = %s::uuid", (user_id,))
+        u = cur.fetchone()
+        if not u or float(u['personal_points']) < float(benefit['price_points']):
+            raise HTTPException(status_code=400, detail=f"個人點數不足，需要 {benefit['price_points']} 點")
+        # 扣點
+        cur.execute("UPDATE users SET personal_points = personal_points - %s WHERE user_id = %s::uuid", (benefit['price_points'], user_id))
+        # 減庫存
+        if benefit['stock'] > 0:
+            cur.execute("UPDATE enterprise_benefits SET stock = stock - 1 WHERE benefit_id = %s::uuid", (benefit_id,))
+        # 生成兌換碼
+        import secrets
+        code = f"CAXN-{secrets.token_hex(8).upper()}"
+        cur.execute("""INSERT INTO benefit_redemptions (benefit_id, user_id, redemption_code, status)
+            VALUES (%s::uuid, %s::uuid, %s, 'ACTIVE') RETURNING redemption_id""",
+            (benefit_id, user_id, code))
+        conn.commit()
+        return {"status": "success", "redemption_code": code, "message": "兌換成功！請妥善保管您的兌換碼"}
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/benefits/{benefit_id}/my-redemption")
+async def get_my_redemption(benefit_id: str, current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT * FROM benefit_redemptions WHERE benefit_id = %s::uuid AND user_id = %s::uuid ORDER BY created_at DESC LIMIT 1", (benefit_id, user_id))
+        row = cur.fetchone()
+        return {"status": "success", "data": row}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/users/my-redemptions")
+async def get_my_all_redemptions(current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""SELECT r.*, b.title, b.benefit_type FROM benefit_redemptions r
+            JOIN enterprise_benefits b ON r.benefit_id = b.benefit_id
+            WHERE r.user_id = %s::uuid ORDER BY r.created_at DESC""", (user_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+# --- 功能完善 ---
+
+@app.get("/api/admin/pending-count")
+async def get_pending_count(current_user = Depends(require_platform_admin)):
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM users WHERE status = 'PENDING'")
+        count = cur.fetchone()[0]
+        return {"status": "success", "count": count}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/assets/search")
+async def search_assets(keyword: str = "", asset_type: str = ""):
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        sql = """SELECT l.asset_id, l.ai_score, l.ai_tags, l.ai_analysis, l.is_archived, l.asset_type,
+                        a.title, a.content_url, a.required_points, a.publish_category
+                 FROM assets_log l JOIN assets a ON l.asset_id = a.asset_id
+                 WHERE l.is_archived = true"""
+        params = []
+        if asset_type: sql += " AND l.asset_type = %s"; params.append(asset_type)
+        if keyword: sql += " AND (a.title ILIKE %s OR l.ai_analysis ILIKE %s)"; params.extend([f"%{keyword}%", f"%{keyword}%"])
+        sql += " ORDER BY l.created_at DESC"
+        cur.execute(sql, params)
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/assets/{asset_id}/stream")
+async def stream_asset(asset_id: str, token: str = ""):
+    """HTTP Range 串流播放，使用 query param token 認證"""
+    from fastapi.responses import StreamingResponse
+    import mimetypes
+    # 驗證 token
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        user_id = payload.get("user_id")
+        cur.execute("SELECT a.content_url, a.owner_enterprise_id, a.asset_type FROM assets a WHERE a.asset_id = %s::uuid", (asset_id,))
+        asset = cur.fetchone()
+        if not asset: raise HTTPException(status_code=404, detail="資產不存在")
+        # 驗證購買或擁有權
+        if str(asset['owner_enterprise_id']) != payload.get("enterprise_id"):
+            cur.execute("""SELECT 1 FROM wallet_transactions t
+                JOIN wallets w ON t.from_wallet_id = w.wallet_id
+                JOIN users u ON w.owner_id = u.enterprise_id
+                WHERE t.related_asset_id = %s::uuid AND u.user_id = %s::uuid AND t.transaction_type = 'ASSET_EXCHANGE'""",
+                (asset_id, user_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=403, detail="尚未購買此資產授權")
+        file_path = os.path.join(DONE_PATH, os.path.basename(asset['content_url']))
+        if not os.path.exists(file_path): raise HTTPException(status_code=404, detail="實體檔案遺失")
+        mime_type = mimetypes.guess_type(file_path)[0] or "video/mp4"
+        file_size = os.path.getsize(file_path)
+        def iterfile(path, start=0, end=None):
+            end = end or file_size - 1
+            with open(path, "rb") as f:
+                f.seek(start)
+                remaining = end - start + 1
+                chunk = 8192
+                while remaining > 0:
+                    data = f.read(min(chunk, remaining))
+                    if not data: break
+                    remaining -= len(data)
+                    yield data
+        return StreamingResponse(iterfile(file_path), media_type=mime_type, headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Range": f"bytes 0-{file_size-1}/{file_size}"
+        })
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

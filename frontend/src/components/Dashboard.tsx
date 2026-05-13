@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon } from 'lucide-react'
+import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon, Search, X } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface Asset {
@@ -58,6 +58,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [purchasedIds, setPurchasedIds] = useState<string[]>([])
   const [purchasingId, setPurchasingId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [filterType, setFilterType] = useState('')
   
   // Modals state
   const [showShippingModal, setShowShippingModal] = useState(false)
@@ -68,25 +70,23 @@ export default function Dashboard() {
   const [logisticsForm, setLogisticsForm] = useState({ name: '', address: '', phone: '' })
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/assets')
+    const url = search || filterType
+      ? `http://localhost:8000/api/assets/search?keyword=${encodeURIComponent(search)}&asset_type=${filterType}`
+      : 'http://localhost:8000/api/assets'
+    fetch(url)
       .then(res => res.json())
       .then(data => {
         if (data.status === 'success') {
-          // 在舊資料中 required_points 可能為 undefined，我們給個預設值 50
           const mapped = data.data.map((a: any) => ({...a, required_points: a.required_points || 50}))
           setAssets(mapped)
         }
         setLoading(false)
       })
-      .catch(err => {
-        console.error(err)
-        setLoading(false)
-      })
+      .catch(err => { console.error(err); setLoading(false) })
       
-    // 嘗試從 localStorage 載入已購買紀錄
     const saved = localStorage.getItem('caxn_purchased')
     if (saved) setPurchasedIds(JSON.parse(saved))
-  }, [])
+  }, [search, filterType])
 
   const handlePurchase = async (asset: Asset) => {
     if (!confirm(`確定要花費 ${asset.required_points} 點購買「${asset.title}」的授權嗎？`)) return;
@@ -197,11 +197,38 @@ export default function Dashboard() {
 
   if (loading) return <div style={{ textAlign: 'center', padding: '3rem' }}>載入中...</div>
 
+  const FILTER_TABS = [
+    { value: '', label: '全部' },
+    { value: 'IMAGE', label: '🖼️ 圖片素材' },
+    { value: 'VIDEO_AD', label: '🎬 形象影片' },
+    { value: 'ECARD', label: '🎴 電子賀卡' },
+    { value: 'COURSE', label: '📚 線上課程' },
+    { value: 'GOODS', label: '🎁 福利品' },
+  ]
+
   return (
     <div>
-      <h2>資產大廳</h2>
-      <p style={{ marginBottom: '2rem' }}>瀏覽由平台會員貢獻並經過 Gemini AI 評分驗證的數位資產。</p>
-      
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <h2 style={{ margin: 0 }}>資產大廳</h2>
+          <p style={{ margin: '0.3rem 0 0', color: 'var(--text-secondary)' }}>瀏覽由平台會員貢獻並經過 Gemini AI 評分驗證的數位資產。</p>
+        </div>
+        <div style={{ position: 'relative', minWidth: '240px' }}>
+          <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋資產名稱或描述..." style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }} />
+          {search && <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={14} /></button>}
+        </div>
+      </div>
+
+      {/* Filter tabs */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        {FILTER_TABS.map(t => (
+          <button key={t.value} onClick={() => setFilterType(t.value)}
+            style={{ padding: '0.4rem 1rem', borderRadius: '20px', cursor: 'pointer', fontSize: '0.875rem', border: filterType === t.value ? '1.5px solid var(--accent-color)' : '1.5px solid transparent', background: filterType === t.value ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.05)', color: filterType === t.value ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
       <div className="grid-3">
         {assets.map((asset, i) => {
           let scoreClass = 'score-low'
@@ -314,15 +341,19 @@ export default function Dashboard() {
         </div>
       )}
 
-      {showVideoModal && (
+      {showVideoModal && activeAsset && (
         <div style={modalOverlayStyle}>
           <div className="glass-panel" style={{...modalContentStyle, maxWidth: '800px', width: '90%'}}>
-            <h3>▶️ {activeAsset?.asset_type === 'COURSE' ? '課程播放' : '影片預覽'} - {activeAsset?.title}</h3>
-            <div style={{ width: '100%', height: '400px', background: '#000', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
-              <Play size={64} color="rgba(255,255,255,0.5)" />
-            </div>
-            <p>此為模擬播放器，實際運作時此處會嵌入 HLS 或 MP4 串流影片。</p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <h3>▶️ {activeAsset.asset_type === 'COURSE' ? '課程串流播放' : '影片播放'} — {activeAsset.title}</h3>
+            <video
+              controls
+              autoPlay
+              style={{ width: '100%', borderRadius: '8px', background: '#000', maxHeight: '420px' }}
+              src={`http://localhost:8000/api/assets/${activeAsset.asset_id}/stream?token=${token}`}
+            >
+              您的瀏覽器不支援影片播放。
+            </video>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button className="danger" onClick={() => setShowVideoModal(false)}>關閉視窗</button>
             </div>
           </div>
