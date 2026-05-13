@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
-export default function Login() {
+interface LoginProps {
+  onRegister: () => void;
+}
+
+export default function Login({ onRegister }: LoginProps) {
   const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('password123');
@@ -93,6 +97,18 @@ export default function Login() {
           <button onClick={() => setTestAccount('ent_user')} style={{ background: 'rgba(255,255,255,0.05)' }}>
             企業一般使用者 (ent_user)
           </button>
+        </div>
+
+        <div style={{ textAlign: 'center' }}>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            尚未有帳號？
+            <button
+              onClick={onRegister}
+              style={{ background: 'transparent', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', padding: '0 0.3rem', textDecoration: 'underline' }}
+            >
+              立即申請加入
+            </button>
+          </p>
         </div>
 
       </div>

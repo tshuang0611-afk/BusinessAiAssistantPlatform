@@ -4,7 +4,7 @@ import psycopg2
 import psycopg2.extras
 from psycopg2.extras import RealDictCursor
 import uuid
-from fastapi import FastAPI, HTTPException, Body, Depends
+from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -103,13 +103,17 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # 第六階段：新增 status 欄位（向下相容）
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'APPROVED'")
+    cur.execute("ALTER TABLE enterprises ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'APPROVED'")
     
     cur.execute("SELECT user_id FROM users WHERE username = 'admin'")
     if not cur.fetchone():
         pwd = get_password_hash("password123")
-        cur.execute("INSERT INTO users (username, password_hash, user_role, phone_number) VALUES ('admin', %s, 'PLATFORM_ADMIN', '0000000000')", (pwd,))
-        cur.execute("INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number) VALUES (%s::uuid, 'ent_admin', %s, 'ENTERPRISE_ADMIN', '1111111111')", (TEST_ENTERPRISE_ID, pwd))
-        cur.execute("INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number) VALUES (%s::uuid, 'ent_user', %s, 'ENTERPRISE_USER', '2222222222')", (TEST_ENTERPRISE_ID, pwd))
+        cur.execute("INSERT INTO users (username, password_hash, user_role, phone_number, status) VALUES ('admin', %s, 'PLATFORM_ADMIN', '0000000000', 'APPROVED')", (pwd,))
+        cur.execute("INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number, status) VALUES (%s::uuid, 'ent_admin', %s, 'ENTERPRISE_ADMIN', '1111111111', 'APPROVED')", (TEST_ENTERPRISE_ID, pwd))
+        cur.execute("INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number, status) VALUES (%s::uuid, 'ent_user', %s, 'ENTERPRISE_USER', '2222222222', 'APPROVED')", (TEST_ENTERPRISE_ID, pwd))
     
     conn.commit()
     cur.close()
@@ -119,6 +123,17 @@ def init_db():
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+class RegisterRequest(BaseModel):
+    mode: str  # 'enterprise' 或 'employee'
+    username: str
+    password: str
+    phone_number: str
+    # 企業入駐用
+    company_name: str = ""
+    tax_id: str = ""
+    # 員工加入用
+    enterprise_tax_id: str = ""
 
 class AssetLogRequest(BaseModel):
     image_path: str
@@ -145,16 +160,28 @@ class LogisticsRequest(BaseModel):
     phone: str
     address: str
 
+class GenerateCreativeRequest(BaseModel):
+    asset_id: str = ""          # 已上架圖片資產 ID（可選）
+    prompt: str
+    output_type: str = "VIDEO"  # VIDEO 或 ECARD
+
 # --- API ---
 @app.post("/api/auth/login")
 async def login(req: LoginRequest):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("SELECT user_id, enterprise_id, username, password_hash, user_role FROM users WHERE username = %s", (req.username,))
+        cur.execute("SELECT user_id, enterprise_id, username, password_hash, user_role, status FROM users WHERE username = %s", (req.username,))
         user = cur.fetchone()
         if not user or not verify_password(req.password, user['password_hash']):
             raise HTTPException(status_code=401, detail="Incorrect auth")
+        
+        # 第六階段：帳號審核狀態檢查
+        user_status = user.get('status', 'APPROVED')
+        if user_status == 'PENDING':
+            raise HTTPException(status_code=403, detail="帳號審核中，請等候平台管理員核准後再登入")
+        elif user_status == 'REJECTED':
+            raise HTTPException(status_code=403, detail="帳號申請已被拒絕，請聯繫平台客服")
         
         token_data = {
             "sub": user['username'],
@@ -166,6 +193,207 @@ async def login(req: LoginRequest):
         return {"status": "success", "access_token": token, "user": token_data}
     finally:
         cur.close(); conn.close()
+
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest):
+    """註冊 API：支援企業入駐(enterprise)與員工加入(employee)兩種模式"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # 確認帳號不重複
+        cur.execute("SELECT user_id FROM users WHERE username = %s", (req.username,))
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="帳號已存在，請選擇其他帳號名稱")
+        
+        pwd = get_password_hash(req.password)
+        
+        if req.mode == 'enterprise':
+            # 企業入駐模式：建立新企業 + 企業管理員帳號
+            if not req.company_name or not req.tax_id:
+                raise HTTPException(status_code=400, detail="請填寫公司名稱與統一編號")
+            
+            cur.execute("SELECT enterprise_id FROM enterprises WHERE tax_id = %s", (req.tax_id,))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="此統一編號已完成申請，請改用員工加入模式")
+            
+            new_ent_id = str(uuid.uuid4())
+            cur.execute(
+                "INSERT INTO enterprises (enterprise_id, company_name, tax_id, status) VALUES (%s::uuid, %s, %s, 'PENDING')",
+                (new_ent_id, req.company_name, req.tax_id)
+            )
+            cur.execute(
+                "INSERT INTO wallets (owner_id, owner_type, balance) VALUES (%s::uuid, 'ENTERPRISE', 0)",
+                (new_ent_id,)
+            )
+            cur.execute(
+                "INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number, status) VALUES (%s::uuid, %s, %s, 'ENTERPRISE_ADMIN', %s, 'PENDING')",
+                (new_ent_id, req.username, pwd, req.phone_number)
+            )
+            conn.commit()
+            return {"status": "success", "message": "企業申請已送出，等候平台管理員審核後即可登入"}
+        
+        elif req.mode == 'employee':
+            # 員工加入模式：透過統編找到企業
+            if not req.enterprise_tax_id:
+                raise HTTPException(status_code=400, detail="請填寫公司統一編號")
+            
+            cur.execute("SELECT enterprise_id, status FROM enterprises WHERE tax_id = %s", (req.enterprise_tax_id,))
+            ent = cur.fetchone()
+            if not ent:
+                raise HTTPException(status_code=404, detail="找不到此統一編號對應的企業，請確認後再試")
+            
+            cur.execute(
+                "INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number, status) VALUES (%s::uuid, %s, %s, 'ENTERPRISE_USER', %s, 'PENDING')",
+                (str(ent['enterprise_id']), req.username, pwd, req.phone_number)
+            )
+            conn.commit()
+            return {"status": "success", "message": "員工申請已送出，等候平台管理員審核後即可登入"}
+        
+        else:
+            raise HTTPException(status_code=400, detail="mode 必須為 enterprise 或 employee")
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/admin/pending-users")
+async def get_pending_users(current_user = Depends(require_platform_admin)):
+    """取得所有待審核帳號列表"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT u.user_id, u.username, u.user_role, u.phone_number, u.status, u.created_at,
+                   e.company_name, e.tax_id, e.status as enterprise_status
+            FROM users u
+            LEFT JOIN enterprises e ON u.enterprise_id = e.enterprise_id
+            WHERE u.status = 'PENDING'
+            ORDER BY u.created_at ASC
+        """)
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.post("/api/admin/approve-user/{user_id}")
+async def approve_user(user_id: str, current_user = Depends(require_platform_admin)):
+    """核准指定使用者帳號"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT user_id, enterprise_id, user_role FROM users WHERE user_id = %s::uuid AND status = 'PENDING'", (user_id,))
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="找不到待審核的使用者")
+        
+        cur.execute("UPDATE users SET status = 'APPROVED' WHERE user_id = %s::uuid", (user_id,))
+        
+        # 若為企業管理員，也一併核准企業
+        if user['enterprise_id'] and user['user_role'] == 'ENTERPRISE_ADMIN':
+            cur.execute("UPDATE enterprises SET status = 'APPROVED' WHERE enterprise_id = %s::uuid", (str(user['enterprise_id']),))
+        
+        conn.commit()
+        return {"status": "success", "message": "帳號已核准"}
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.post("/api/admin/reject-user/{user_id}")
+async def reject_user(user_id: str, current_user = Depends(require_platform_admin)):
+    """拒絕指定使用者帳號申請"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("UPDATE users SET status = 'REJECTED' WHERE user_id = %s::uuid AND status = 'PENDING'", (user_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="找不到待審核的使用者")
+        conn.commit()
+        return {"status": "success", "message": "已拒絕該帳號申請"}
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.post("/api/ai/generate-creative")
+async def generate_creative(req: GenerateCreativeRequest, current_user = Depends(require_enterprise_admin)):
+    """AI 創作坊：使用 Gemini 生成影片腳本或電子賀卡文案，扣除 20 點 AI 運算費"""
+    AI_CREATIVE_FEE = 20.0
+    ent_id = current_user.get("enterprise_id")
+    if not ent_id:
+        raise HTTPException(status_code=403, detail="需要綁定企業才能使用 AI 創作坊")
+    
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # 檢查餘額
+        cur.execute("SELECT wallet_id, balance FROM wallets WHERE owner_id = %s::uuid", (ent_id,))
+        wallet = cur.fetchone()
+        if not wallet or float(wallet['balance']) < AI_CREATIVE_FEE:
+            raise HTTPException(status_code=400, detail=f"點數餘額不足，AI 創作需消耗 {AI_CREATIVE_FEE} 點")
+        
+        # 組合 Gemini Prompt
+        if req.output_type == "VIDEO":
+            system_prompt = f"""你是一位專業的品牌影片導演與廣告文案專家。
+請根據以下需求，為企業生成一份完整的「Veo 影片分鏡腳本」。
+格式必須是繁體中文，且以結構化 JSON 格式輸出，包含以下欄位：
+- title（腳本標題）
+- duration_seconds（建議影片秒數）
+- style（畫面風格描述，英文，適合直接貼入 Veo）
+- scenes（陣列，每個場景包含：scene_number, duration, visual_description_en, narration_zh, camera_angle）
+- veo_main_prompt（一段完整的英文 Prompt，可直接貼入 Veo 生成影片）
+- tagline（品牌標語，繁體中文）
+
+企業需求：{req.prompt}"""
+        else:  # ECARD
+            system_prompt = f"""你是一位頂級的品牌創意總監與文案撰稿人。
+請根據以下需求，為企業生成一份「AI 電子賀卡」的完整創作方案。
+格式必須是繁體中文，且以結構化 JSON 格式輸出，包含以下欄位：
+- title（賀卡標題）
+- occasion（節日/場合）
+- main_copy_zh（主文案，繁體中文，3-5句話）
+- signature（落款建議）
+- image_prompt_en（英文圖片生成 Prompt，適合貼入 Imagen 或 Nano Banana 生成背景圖）
+- color_palette（建議色系，例如："#FF6B6B, #FFE66D, #4ECDC4"）
+- font_suggestion（字型風格建議）
+
+企業需求：{req.prompt}"""
+        
+        # 若有選擇素材圖片，嘗試載入
+        contents = [system_prompt]
+        if req.asset_id:
+            try:
+                cur.execute("SELECT content_url FROM assets WHERE asset_id = %s::uuid", (req.asset_id,))
+                asset = cur.fetchone()
+                if asset:
+                    img_path = os.path.join(DONE_PATH, os.path.basename(asset['content_url']))
+                    if os.path.exists(img_path):
+                        img = PIL.Image.open(img_path)
+                        contents.insert(0, img)
+            except Exception:
+                pass  # 圖片載入失敗不影響文字生成
+        
+        # 呼叫 Gemini
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=contents,
+            config={"response_mime_type": "application/json"}
+        )
+        result_json = json.loads(response.text)
+        
+        # 扣除 AI 運算費
+        cur.execute("UPDATE wallets SET balance = balance - %s WHERE wallet_id = %s", (AI_CREATIVE_FEE, wallet['wallet_id']))
+        cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (AI_CREATIVE_FEE, PLATFORM_WALLET_OWNER_ID))
+        cur.execute("""
+            INSERT INTO wallet_transactions (from_wallet_id, to_wallet_id, amount, transaction_type, description)
+            VALUES (%s, (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid), %s, 'FEE', 'AI創作坊手續費')
+        """, (wallet['wallet_id'], PLATFORM_WALLET_OWNER_ID, AI_CREATIVE_FEE))
+        
+        conn.commit()
+        return {
+            "status": "success",
+            "output_type": req.output_type,
+            "result": result_json,
+            "fee_charged": AI_CREATIVE_FEE
+        }
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
 
 @app.get("/api/auth/me")
 async def get_me(current_user = Depends(get_current_user)):

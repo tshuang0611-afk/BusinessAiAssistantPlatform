@@ -3,26 +3,33 @@ import Dashboard from './components/Dashboard'
 import Wallet from './components/Wallet'
 import Upload from './components/Upload'
 import Login from './components/Login'
+import Register from './components/Register'
 import AssetManager from './components/AssetManager'
 import TransactionList from './components/TransactionList'
+import AdminApproval from './components/AdminApproval'
+import AICreator from './components/AICreator'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { LayoutDashboard, Wallet as WalletIcon, UploadCloud, Cloud, LogOut, PackageSearch, FileText } from 'lucide-react'
+import { LayoutDashboard, Wallet as WalletIcon, UploadCloud, Cloud, LogOut, PackageSearch, FileText, ShieldCheck, Sparkles } from 'lucide-react'
 import './index.css'
 
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [showRegister, setShowRegister] = useState(false)
   const { user, logout } = useAuth()
 
+  // 未登入：顯示登入或註冊頁
   if (!user) {
-    return <Login />
+    if (showRegister) {
+      return <Register onBack={() => setShowRegister(false)} />
+    }
+    return <Login onRegister={() => setShowRegister(true)} />
   }
 
   const roleLabels: Record<string, string> = {
     'PLATFORM_ADMIN': '平台管理者',
     'ENTERPRISE_ADMIN': '企業功能性使用者',
     'ENTERPRISE_USER': '企業一般使用者'
-  };
-
+  }
 
   return (
     <div className="app-container">
@@ -34,15 +41,17 @@ function MainApp() {
         
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <nav className="nav-tabs">
-            <button 
+            {/* 資產大廳 — 所有人可見 */}
+            <button
               className={activeTab === 'dashboard' ? 'active' : ''}
               onClick={() => setActiveTab('dashboard')}
             >
               <LayoutDashboard size={18} /> 資產大廳
             </button>
-            
+
+            {/* 上傳資產 — 企業管理員 / 平台管理員 */}
             {(user.role === 'ENTERPRISE_ADMIN' || user.role === 'PLATFORM_ADMIN') && (
-              <button 
+              <button
                 className={activeTab === 'upload' ? 'active' : ''}
                 onClick={() => setActiveTab('upload')}
               >
@@ -50,8 +59,9 @@ function MainApp() {
               </button>
             )}
 
+            {/* 資產管理 — 企業管理員 */}
             {user.role === 'ENTERPRISE_ADMIN' && (
-              <button 
+              <button
                 className={activeTab === 'manage' ? 'active' : ''}
                 onClick={() => setActiveTab('manage')}
               >
@@ -59,8 +69,20 @@ function MainApp() {
               </button>
             )}
 
+            {/* ★ AI 創作坊 — 企業管理員 */}
+            {user.role === 'ENTERPRISE_ADMIN' && (
+              <button
+                className={activeTab === 'ai_creator' ? 'active' : ''}
+                onClick={() => setActiveTab('ai_creator')}
+                style={activeTab === 'ai_creator' ? {} : { background: 'rgba(99,102,241,0.08)' }}
+              >
+                <Sparkles size={18} /> AI 創作坊
+              </button>
+            )}
+
+            {/* 交易明細 — 平台管理員 */}
             {user.role === 'PLATFORM_ADMIN' && (
-              <button 
+              <button
                 className={activeTab === 'transactions' ? 'active' : ''}
                 onClick={() => setActiveTab('transactions')}
               >
@@ -68,7 +90,19 @@ function MainApp() {
               </button>
             )}
 
-            <button 
+            {/* ★ 審核管理 — 平台管理員 */}
+            {user.role === 'PLATFORM_ADMIN' && (
+              <button
+                className={activeTab === 'approval' ? 'active' : ''}
+                onClick={() => setActiveTab('approval')}
+                style={activeTab === 'approval' ? {} : { background: 'rgba(16,185,129,0.08)' }}
+              >
+                <ShieldCheck size={18} /> 審核管理
+              </button>
+            )}
+
+            {/* 點數錢包 — 所有人可見 */}
+            <button
               className={activeTab === 'wallet' ? 'active' : ''}
               onClick={() => setActiveTab('wallet')}
             >
@@ -89,11 +123,13 @@ function MainApp() {
       </header>
 
       <main>
-        {activeTab === 'dashboard' && <Dashboard />}
-        {activeTab === 'upload' && <Upload onUploadSuccess={() => setActiveTab('manage')} />}
-        {activeTab === 'manage' && <AssetManager />}
-        {activeTab === 'transactions' && <TransactionList />}
-        {activeTab === 'wallet' && <Wallet />}
+        {activeTab === 'dashboard'   && <Dashboard />}
+        {activeTab === 'upload'      && <Upload onUploadSuccess={() => setActiveTab('manage')} />}
+        {activeTab === 'manage'      && <AssetManager />}
+        {activeTab === 'ai_creator'  && <AICreator />}
+        {activeTab === 'transactions'&& <TransactionList />}
+        {activeTab === 'approval'    && <AdminApproval />}
+        {activeTab === 'wallet'      && <Wallet />}
       </main>
     </div>
   )
