@@ -250,7 +250,7 @@ async def archive_asset(log_id: str, req: ArchiveRequest, current_user = Depends
                     (req.asset_type, req.title, req.required_points, log_id))
         cur.execute("UPDATE assets_log SET is_archived = true, asset_type = %s WHERE asset_id = %s::uuid", (req.asset_type, log_id))
         conn.commit()
-        return {"status": "success"}
+        return {"status": "success", "message": "歸檔成功並已扣除 AI 手續費"}
     except HTTPException: raise
     except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
@@ -284,7 +284,7 @@ async def purchase_asset(asset_id: str, current_user = Depends(get_current_user)
                        VALUES (%s, (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid), %s, %s, 'ASSET_EXCHANGE', %s::uuid)""",
                     (buyer_wallet['wallet_id'], PLATFORM_WALLET_OWNER_ID, full_price, platform_fee, asset_id))
         conn.commit()
-        return {"status": "success"}
+        return {"status": "success", "message": "分潤採購成功"}
     except HTTPException: raise
     except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
@@ -398,7 +398,7 @@ async def create_logistics_order(req: LogisticsRequest, current_user = Depends(g
             VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s)
         """, (user_id, req.asset_id, req.delivery_method, req.recipient_name, req.phone, req.address))
         conn.commit()
-        return {"status": "success"}
+        return {"status": "success", "message": "物流訂單建立成功"}
     except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
 
