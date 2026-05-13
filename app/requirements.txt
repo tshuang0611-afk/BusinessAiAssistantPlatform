@@ -5,3 +5,6 @@ psycopg2-binary
 pydantic
 requests
 pillow
+PyJWT
+passlib[bcrypt]
+bcrypt==3.2.2

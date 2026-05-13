@@ -27,3 +27,17 @@ services:
       - ./app:/app
       # 確保本機的 uploads 及其下的 done 子目錄完整映射到容器[cite: 10]
       - ./app/uploads:/app/uploads
+
+  frontend:
+    build: ./frontend
+    container_name: caxn_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - app
