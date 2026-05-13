@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:15
+    container_name: caxn_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: caxn_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  app:
+    build: ./app
+    container_name: caxn_app
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    volumes:
+      - ./app:/app
+      # 確保本機的 uploads 及其下的 done 子目錄完整映射到容器[cite: 10]
+      - ./app/uploads:/app/uploads

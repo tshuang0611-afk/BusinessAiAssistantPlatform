@@ -1,0 +1,228 @@
+請提供您建議的 「點數自動撥付」的 Stored Procedure (預存程序) 提供實作逻辑嗎？或是對於 API 傳輸加密 有進一步的需求？這兩個問題的實作語法,感謝
+
+針對您的需求，我將分別針對 「點數自動撥付」的 Stored Procedure 以及 「API 傳輸加密」的實作實務 提供詳細的邏輯與語法建議。
+
+一、 點數自動撥付：Stored Procedure (PostgreSQL)
+為了實現您 Prototype 中提到的「貢獻（上傳知識/點閱）後自動獲得點數」，我們需要一個後端自動化程序。這段程序會掃描 Contribution_Logs 中尚未清算的紀錄，計算應撥點數，並同時更新「個人錢包」與「交易紀錄」。
+
+實作邏輯：sp_auto_settle_contributions
+篩選：找出 settlement_status = 'PENDING' 的貢獻紀錄。
+
+鎖定：確保處理期間資料不會被重複計算。
+
+計算：根據不同的貢獻類型（如：上傳、點閱）與 VIP 匯率進行加權。
+
+入帳：更新 Users 表的 wallet_points 並寫入 Transaction_Ledger。
+
+更新狀態：將原紀錄改為 'SETTLED'。
+
+SQL
+CREATE OR REPLACE PROCEDURE sp_auto_settle_contributions()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    rec RECORD;
+    calc_points DECIMAL(15, 2);
+    current_ratio DECIMAL(5, 2);
+BEGIN
+    -- 1. 遍歷所有待清算的貢獻紀錄
+    FOR rec IN 
+        SELECT cl.*, u.enterprise_id, v.cash_to_point_ratio 
+        FROM Contribution_Logs cl
+        JOIN Users u ON cl.user_id = u.user_id
+        JOIN VIP_Tiers_Config v ON u.enterprise_id = v.tier_id -- 這裡應根據企業關聯對應的 VIP 等級
+        WHERE cl.settlement_status = 'PENDING'
+    LOOP
+        -- 2. 獲取企業目前的匯率加權 (依據您的 VIP 邏輯)
+        current_ratio := rec.cash_to_point_ratio;
+
+        -- 3. 計算點數 (這裡假設點閱獎勵受匯率影響)
+        IF rec.contribution_type = 'UPLOAD' THEN
+            calc_points := rec.points_earned; -- 上傳獎勵通常為固定值
+        ELSIF rec.contribution_type = 'VIEW' THEN
+            calc_points := rec.points_earned * current_ratio; -- 點閱受匯率影響
+        END IF;
+
+        -- 4. 使用交易事務確保原子性 (BEGIN/COMMIT 由外部調用或包含在程序內)
+        -- A. 更新個人錢包
+        UPDATE Users 
+        SET wallet_points = wallet_points + calc_points
+        WHERE user_id = rec.user_id;
+
+        -- B. 寫入交易總表 (對應您 PDF 第 9 頁的錢包紀錄)
+        INSERT INTO Transaction_Ledger (
+            user_id, tx_type, category, amount_pts, reference_id, description
+        ) VALUES (
+            rec.user_id, 'EARN', 'CONTRIBUTION', calc_points, rec.log_id, 
+            '自動清算貢獻點數: ' || rec.contribution_type
+        );
+
+        -- C. 更新原始紀錄狀態為已清算
+        UPDATE Contribution_Logs 
+        SET settlement_status = 'SETTLED'
+        WHERE log_id = rec.log_id;
+
+    END LOOP;
+END;
+$$;
+二、 API 傳輸加密：實作策略 (Node.js)
+針對企業 AI 平台，資料涉及企業資產與金流，除了基礎的 HTTPS 外，建議針對「敏感 Payload」進行 AES-256-GCM 加密，並配合 HMAC 簽章 驗證資料完整性。
+
+1. 對稱加密 (AES-256-GCM) 範例
+這用於傳輸敏感的點數操作指令，確保即便流量被攔截也無法解讀內容。
+
+JavaScript
+const crypto = require('crypto');
+
+const ALGORITHM = 'aes-256-gcm';
+const SECRET_KEY = Buffer.from('你的32位元金鑰...', 'utf8'); // 應儲存在環境變數
+
+// 加密函數
+function encryptPayload(data) {
+    const iv = crypto.randomBytes(12); // 初始化向量
+    const cipher = crypto.createCipheriv(ALGORITHM, SECRET_KEY, iv);
+    
+    let encrypted = cipher.update(JSON.stringify(data), 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    
+    const authTag = cipher.getAuthTag().toString('hex');
+    
+    return {
+        iv: iv.toString('hex'),
+        content: encrypted,
+        tag: authTag
+    };
+}
+
+// 實務應用：在 Request body 中傳送加密後的內容
+const secureRequest = encryptPayload({ 
+    user_id: "user-uuid", 
+    action: "DEBIT_POINTS", 
+    amount: 1500 
+});
+2. HMAC 訊息簽章 (確保不可竄改)
+這用於防止「重放攻擊」或在傳輸過程中被竄改數值（例如 100 點被改成 10,000 點）。
+
+JavaScript
+function generateSignature(payload, secret) {
+    return crypto
+        .createHmac('sha256', secret)
+        .update(JSON.stringify(payload))
+        .digest('hex');
+}
+
+// 在 API Header 帶入： X-CAXN-Signature: <hmac_result>
+三、 總結與建議
+自動化清算時機：建議將上述 Stored Procedure 透過資料庫的 Cron Job（如 PostgreSQL 的 pg_cron）設定為每小時執行一次，或是每天凌晨 12 點進行「點數大結算」。
+
+安全層次：
+
+一般資料：HTTPS (TLS 1.3) 即可。
+
+點數撥付/購點指令：必須實施 HMAC 簽章 + Nonce (隨機數) 驗證，防止訂單被重複發送。
+
+私有雲傳輸：若涉及企業內部私有雲檔案交換，建議使用 mTLS (雙向 TLS) 驗證，確保只有被授權的 Enterprise Connector 才能與平台溝通。
+
+這兩套實作語法能讓您的平台在 財務結算的自動化 與 資料傳輸的安全防禦 上，達到銀行級 SaaS 的基本標準。您需要我為您寫出 API 端驗證這些簽章的中間件 (Middleware) 程式碼嗎？
+
+請幫我寫出 寫出 API 端驗證這些簽章的中間件 (Middleware) 程式碼嗎？感謝
+
+針對您先前建立的「API 傳輸加密」與「HMAC 簽章」機制，我為您準備了 Node.js (Express) 環境下的中間件 (Middleware) 程式碼範例。
+
+這個中間件會攔截所有進來的請求，驗證其 HMAC 簽章 以及 Timestamp（防止重放攻擊），確保請求在傳輸過程中未被篡改且具有時效性。
+
+API 簽章驗證中間件實作
+此中間件會檢查 HTTP Header 中的 X-CAXN-Signature 與 X-CAXN-Timestamp。
+
+JavaScript
+const crypto = require('crypto');
+
+/**
+ * CAXN API 安全驗證中間件
+ * 用於驗證請求的 HMAC 簽章與時效性
+ */
+const verifyApiSignature = (req, res, next) => {
+    // 1. 從 Header 取得簽章、時間戳記與隨機數
+    const clientSignature = req.headers['x-caxn-signature'];
+    const timestamp = req.headers['x-caxn-timestamp'];
+    const secretKey = process.env.API_SIGNING_SECRET; // 儲存在環境變數中的金鑰
+
+    if (!clientSignature || !timestamp) {
+        return res.status(401).json({ error: '缺少安全驗證資訊 (Signature/Timestamp)' });
+    }
+
+    // 2. 防止重放攻擊 (Replay Attack)：檢查時間戳記是否超過 5 分鐘
+    const now = Math.floor(Date.now() / 1000);
+    const requestTime = parseInt(timestamp);
+    if (isNaN(requestTime) || Math.abs(now - requestTime) > 300) {
+        return res.status(401).json({ error: '請求已過期 (Request Expired)' });
+    }
+
+    // 3. 組合原始字串 (Raw String) 進行驗證
+    // 包含：HTTP 方法 + 路徑 + 時間戳記 + Body 內容
+    const method = req.method.toUpperCase();
+    const path = req.originalUrl;
+    const body = JSON.stringify(req.body); 
+    
+    // 注意：若 Body 為空或 GET 請求，body 字串需統一定義（例如空字串或 "{}"）
+    const rawPayload = `${method}${path}${timestamp}${body}`;
+
+    // 4. 使用伺服器端的 Secret Key 計算 HMAC SHA256
+    const serverSignature = crypto
+        .createHmac('sha256', secretKey)
+        .update(rawPayload)
+        .digest('hex');
+
+    // 5. 比對簽章 (使用 timingSafeEqual 防止計時攻擊)
+    const serverSigBuf = Buffer.from(serverSignature);
+    const clientSigBuf = Buffer.from(clientSignature);
+
+    if (serverSigBuf.length !== clientSigBuf.length || 
+        !crypto.timingSafeEqual(serverSigBuf, clientSigBuf)) {
+        return res.status(403).json({ error: '簽章驗證失敗 (Invalid Signature)' });
+    }
+
+    // 驗證通過，繼續下一個處理程序
+    next();
+};
+
+module.exports = verifyApiSignature;
+如何在 Express 路由中使用？
+您可以針對特定的「點數撥付」或「合約調整」 API 掛載此安全中間件。
+
+JavaScript
+const express = require('express');
+const router = express.Router();
+const verifySignature = require('./middlewares/verifySignature');
+
+// 範例：點數撥付 API (強制需要簽章驗證)
+router.post('/finance/disburse-points', verifySignature, async (req, res) => {
+    try {
+        // 執行先前建議的 Stored Procedure sp_auto_settle_contributions
+        // ... 資料庫操作邏輯
+        res.status(200).json({ message: '點數撥付指令已成功驗證並執行' });
+    } catch (error) {
+        res.status(500).json({ error: '伺服器內部錯誤' });
+    }
+});
+
+module.exports = router;
+這套驗證機制的 3 個防禦重點
+防止資料篡改 (Integrity)：因為簽章包含了 req.body，如果駭客修改了撥付的點數數值，伺服器計算出的 HMAC 就會與 Client 端不符。
+
+防止重放攻擊 (Anti-Replay)：透過 timestamp 檢查。即便駭客截獲了一個合法的請求封包，超過 5 分鐘後該封包即失效。
+
+防止計時攻擊 (Timing Attack)：使用了 crypto.timingSafeEqual。這能防止黑客透過測量伺服器比對字串的時間長短，來逐一破解簽章內容。
+
+前端 Client 端該如何配合發送請求？
+您的前端或企業 Connector 需要在發送時執行以下邏輯：
+
+Step 1: 取得當前 UNIX 時間戳。
+
+Step 2: 依照 Method + Path + Timestamp + JSON.stringify(Body) 順序組成字串。
+
+Step 3: 用約定的 SecretKey 算出 HMAC SHA256。
+
+Step 4: 將結果放入 Header 發送。
+
+這套機制能確保您的 CAXN 平台 在處理跨企業的大額點數清算時，具備金融級別的傳輸安全性。

@@ -1,0 +1,307 @@
+請幫我重新review我上傳彙整後的table schema 和我上傳的prototype 是否有需要調整的部分?感謝
+
+根據您上傳的 table schema 20260425.doc 以及先前的 CAXN企業AI資源共享平台.pdf (Prototype) 與功能清單，我進行了深度交叉檢核。
+
+目前 Schema 已經涵蓋了核心的 VIP 體系、資產管理與合規紀錄，但為了完整支撐第 11 頁到第 43 頁提到的**「算力分配」、「物流核銷」以及「以課易課的分潤邏輯」**，建議針對以下部分進行調整與補充：
+
+1. 針對「VIP CRM 與 算力分配」的調整 (Page 37-41)
+在 Prototype 中提到「通道優先」與「功能開關 (Feature Flag)」，目前的 VIP_Tiers_Config 已經包含 feature_flags，但建議在 Enterprises 表中增加即時狀態欄位，以便 Dashboard 顯示。
+
+建議調整：
+
+在 Enterprises 表增加 current_priority_level (由系統根據 VIP 與資安分數自動計算)。
+
+增加 Enterprise_Feature_Status 表，明確紀錄特定企業的合約到期日與個別功能啟動狀態（避免全部寫在 JSONB 導致查詢困難）。
+
+2. 針對「以課易課：流量分潤」的調整 (Page 10, 30)
+Prototype 第 10 頁提到「分享點閱人(次)數」與「貢獻 pts」，目前的 Contribution_Logs 僅紀錄了行為，缺乏「清算狀態」。
+
+建議調整：
+
+Contribution_Logs 增加 settlement_status (已清算/未清算)： 確保點數不會重複撥付。
+
+Contribution_Logs 增加 viewer_enterprise_id： 紀錄是「哪家企業」的員工看了課程，這對未來進行「跨企業行為分析」至關重要。
+
+3. 針對「福利社與物流核銷」的補充 (Page 42)
+Prototype 第 42 頁展示了實體商品（如藍牙耳機）的兌換。目前的 Schema 較缺乏物流追蹤。
+
+建議補充：Welfare_Orders (福利品訂單表)
+
+order_id, user_id, asset_id (福利品 ID)。
+
+points_spent: 紀錄扣除的點數。
+
+shipping_info: 存儲收件地址。
+
+order_status: 狀態應包含 待出貨、已出貨、已收貨、已核銷。
+
+tracking_number: 串接物流 API 的追蹤碼。
+
+4. 針對「個人數位專案」與「企業庫」的權限邏輯 (Page 32-36)
+目前的 User_Digital_Projects 紀錄了個人生成的結果，但缺少與「企業資產」的授權關聯檢查。
+
+建議調整：
+
+增加一個 Asset_Usage_Policy 表：定義哪些素材可以被「一般員工」用於「數位賀卡」，哪些僅限「行銷人員」用於「形象影片」。這對應了您功能清單中的「員工與網頁存取權限對應表」。
+
+5. 彙整後的建議補充 Schema 語法
+SQL
+-- 補充：福利品訂單與物流 (對應第 42 頁)
+CREATE TABLE Welfare_Orders (
+    order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    buyer_user_id UUID REFERENCES Users(user_id),
+    asset_id UUID REFERENCES Assets(asset_id), -- 指向類別為 WELFARE 的資產
+    points_at_purchase DECIMAL(15, 2), -- 紀錄購買時的點數，避免未來調價糾紛
+    order_status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, SHIPPED, COMPLETED, CANCELLED
+    shipping_address TEXT,
+    tracking_number VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 補充：資安掃描歷史紀錄 (對應第 29 頁)
+-- 原本的 Compliance_Audit_Logs 偏向 AI 生成，建議增加針對企業私有雲的掃描
+CREATE TABLE Security_Scan_History (
+    scan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    enterprise_id UUID REFERENCES Enterprises(enterprise_id),
+    scan_report_url TEXT,
+    overall_score DECIMAL(5, 2),
+    vulnerabilities_found JSONB, -- 紀錄發現的弱點
+    scan_date TIMESTAMP DEFAULT NOW()
+);
+總結建議
+您的 Prototype 展現了非常強大的 B2B2C 閉環。目前的 Schema 在「靜態數據」存儲上沒問題，但對於**「動態流程（物流、清算狀態、權限過濾）」**需要再補強上述欄位。
+
+下一個步驟建議：
+您可以開始定義 API 接口清單，特別是針對「點數撥付」與「物流狀態更新」的 Webhook，這將會直接影響到 Transactions 與 Welfare_Orders 表的狀態變更邏輯。
+
+
+
+
+請根據您的建議幫我產出修訂後的SQL 的 Table schema,感謝
+
+根據您的 Prototype 雛形（第 11-43 頁）以及我先前的 Review 建議，我彙整了一份完整的修訂版 SQL Table Schema。
+
+這份設計強化了「點數清算狀態」、「物流追蹤」以及「動態 VIP 匯率控制」，能精準對接您 Mockup 中提到的「以課易課」、「異業福利兌換」與「後台營運監控」。
+
+CAXN 企業 AI 協作平台 - 修訂版資料庫架構
+1. 核心帳號與 VIP 體系 (加強動態權限)
+SQL
+-- VIP 等級定義表：對應後台 CRM 匯率調整介面
+CREATE TABLE VIP_Tiers_Config (
+    tier_id INT PRIMARY KEY, -- 1: Standard, 2: Strategic VIP, 3: Expert Partner
+    tier_name VARCHAR(50),
+    cash_to_point_ratio DECIMAL(5, 2), -- 點數現金比 (如 0.6)
+    ai_compute_priority INT DEFAULT 1, -- 算力優先級 (1-10)
+    monthly_storage_limit_gb INT DEFAULT 50,
+    feature_flags JSONB, -- 儲存開啟功能，例如 {"ai_video": true, "live": false}
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 企業帳號：增加資安分數與優先級狀態
+CREATE TABLE Enterprises (
+    enterprise_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tax_id VARCHAR(10) UNIQUE NOT NULL, -- 統一編號
+    company_name VARCHAR(255) NOT NULL,
+    vip_level INT REFERENCES VIP_Tiers_Config(tier_id),
+    current_priority_level INT DEFAULT 1, -- 即時算力優先權
+    security_score DECIMAL(5, 2) DEFAULT 100.00, -- 資安健康度
+    is_private_cloud_connected BOOLEAN DEFAULT FALSE, -- 私有雲掛載狀態
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 使用者：手機號碼為唯一註冊標識
+CREATE TABLE Users (
+    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    enterprise_id UUID REFERENCES Enterprises(enterprise_id),
+    phone_number VARCHAR(20) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    user_role VARCHAR(50), -- Admin, HR, Marketing, Staff, Instructor
+    wallet_points DECIMAL(15, 2) DEFAULT 0.00, -- 個人錢包點數
+    created_at TIMESTAMP DEFAULT NOW()
+);
+2. 數位資產與貢獻模組 (加強分潤與清算邏輯)
+SQL
+-- 數位資產表 (整合課程、素材、福利品)
+CREATE TABLE Assets (
+    asset_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_enterprise_id UUID REFERENCES Enterprises(enterprise_id),
+    asset_type VARCHAR(20), -- COURSE (課程), IMAGE (形象素材), WELFARE (福利品)
+    title VARCHAR(255),
+    content_url TEXT,
+    required_points DECIMAL(15, 2), -- 兌換/調用所需點數
+    contribution_pts_reward DECIMAL(15, 2), -- 上傳基礎獎勵
+    is_compliant BOOLEAN DEFAULT FALSE, -- 合規檢核狀態
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 貢獻與流量紀錄：對應 PDF 第 10 頁
+CREATE TABLE Contribution_Logs (
+    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES Users(user_id), -- 貢獻者
+    asset_id UUID REFERENCES Assets(asset_id),
+    viewer_enterprise_id UUID REFERENCES Enterprises(enterprise_id), -- 誰看了(跨企業分析)
+    contribution_type VARCHAR(50), -- UPLOAD (上傳), VIEW (點閱), SHARE (分享)
+    points_earned DECIMAL(15, 2), -- 賺取的點數
+    settlement_status VARCHAR(20) DEFAULT 'PENDING', -- PENDING (待清算), SETTLED (已撥付)
+    created_at TIMESTAMP DEFAULT NOW()
+);
+3. 福利社與物流交易 (對應 PDF 第 9 & 42 頁)
+SQL
+-- 福利品訂單：處理實體與電子禮券
+CREATE TABLE Welfare_Orders (
+    order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    buyer_user_id UUID REFERENCES Users(user_id),
+    asset_id UUID REFERENCES Assets(asset_id),
+    points_spent DECIMAL(15, 2), -- 紀錄下單時扣除的點數
+    order_status VARCHAR(50), -- PENDING, PAID, SHIPPING, COMPLETED, CANCELLED
+    shipping_address TEXT, -- 收件地址
+    tracking_number VARCHAR(100), -- 物流追蹤碼
+    invoice_number VARCHAR(50), -- 電子發票號碼 (對應 ERP API)
+    created_at TIMESTAMP DEFAULT NOW()
+);
+4. AI 工作坊與合規監控 (對應 PDF 第 11-29 頁)
+SQL
+-- AI 生成任務紀錄
+CREATE TABLE AI_Generation_Tasks (
+    task_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES Users(user_id),
+    source_asset_id UUID REFERENCES Assets(asset_id),
+    prompt_config JSONB, -- AI 腳本設定
+    output_url TEXT, -- 生成結果路徑
+    vi_audit_score INT, -- VI 檢核分數
+    is_legal_compliant BOOLEAN, -- 廣告法規檢核
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 資安掃描歷史：對應第 29 頁
+CREATE TABLE Security_Scan_Logs (
+    scan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    enterprise_id UUID REFERENCES Enterprises(enterprise_id),
+    scan_score DECIMAL(5, 2),
+    vulnerability_details JSONB, -- 弱點明細
+    report_pdf_url TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+三、 修訂重點解析
+狀態化管理 (settlement_status)： 在 Contribution_Logs 增加清算狀態，確保講師的「以課易課」獎勵點數在撥付後會被標記，避免重複核銷，這對財務審計至關重要。
+
+物流閉環 (Welfare_Orders)： 為了實現第 42 頁的實體商品兌換，我們新增了地址與追蹤碼欄位，這讓「下單 > 扣點 > 物流」的流程在資料庫層級得以完整。
+
+算力分配機制 (VIP_Tiers_Config)： 獨立出 VIP 配置表，讓您可以隨時在後台調整 ai_compute_priority。當 AI 引擎運作時，會優先查詢此表的數值進行任務排序。
+
+權限與功能開關 (feature_flags)： 使用 JSONB 格式儲存功能開關，讓平台營運端能靈活控管哪些企業可以使用「直播」或「私有雲 Connector」。
+
+這份 SQL Schema 已經為您的雛形打好了堅實的後端基礎。您需要我針對其中「點數自動撥付」的 Stored Procedure (預存程序) 提供實作逻辑嗎？或是對於 API 傳輸加密 有進一步的需求？
+
+
+
+請問您建議的 增加一個 Asset_Usage_Policy 表：定義哪些素材可以被「一般員工」用於「數位賀卡」，哪些僅限「行銷人員」用於「形象影片」。這對應了您功能清單中的「員工與網頁存取權限對應表」。可以幫我產生SQL table schema嗎?
+
+根據您的需求，為了實作功能清單中的「員工與網頁存取權限對應表」，並精確控管素材在不同場景（如數位賀卡、形象影片）下的使用權限，我為您設計了 Asset_Usage_Policy 及其關聯表的 SQL Schema。
+
+這套設計採用了 RBAC (角色存取控制) 與 場景控制 的結合，確保「一般員工」與「行銷人員」在調用企業資產時有明確的界線。
+
+Asset_Usage_Policy 權限控管架構
+1. 素材使用策略表 (Asset_Usage_Policy)
+此表是核心，定義了「什麼角色」在「什麼場景」下可以使用「什麼類型的素材」。
+
+SQL
+-- 素材使用策略表：定義角色與場景的對應權限
+CREATE TABLE Asset_Usage_Policy (
+    policy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    enterprise_id UUID REFERENCES Enterprises(enterprise_id),
+    role_name VARCHAR(50) NOT NULL, -- 如: '一般員工', '行銷人員', 'HR'
+    usage_context VARCHAR(50) NOT NULL, -- 使用場景: 'DIGITAL_CARD' (賀卡), 'BRAND_VIDEO' (形象影片)
+    allowed_asset_types JSONB, -- 允許的素材類型, 如 ["IMAGE", "LOGO"]
+    can_use_ai_tools BOOLEAN DEFAULT TRUE, -- 是否允許調用 AI 生成工具
+    created_at TIMESTAMP DEFAULT NOW(),
+    
+    -- 確保同一企業下，角色與場景的組合唯一
+    CONSTRAINT unique_role_context UNIQUE(enterprise_id, role_name, usage_context)
+);
+2. 素材權限關聯表 (Asset_Access_Control)
+如果您需要針對「特定單一素材」進行更細緻的權限設定（例如：某張代言人照片僅限行銷人員使用），則需要此表。
+
+SQL
+-- 素材存取控制表：針對特定素材的進階權限設定
+CREATE TABLE Asset_Access_Control (
+    access_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id UUID REFERENCES Assets(asset_id),
+    restricted_to_roles JSONB, -- 限制僅哪些角色可存取, 如 ["Marketing_Admin"]
+    is_internal_only BOOLEAN DEFAULT TRUE, -- 是否僅限企業內部使用 (不可用於對外分享)
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+三、 實務運作邏輯說明
+情境一：一般員工製作數位賀卡
+
+當「一般員工」開啟「創意小助手 (Lite AI)」製作賀卡時，系統會查詢 Asset_Usage_Policy。
+
+查詢條件：role_name = '一般員工' 且 usage_context = 'DIGITAL_CARD'。
+
+結果：系統僅會從 Assets 表中過濾出類型為 IMAGE 的通用背景圖，隱藏所有 COURSE (課程) 或敏感的 PRODUCT_3D 模型。
+
+情境二：行銷人員製作形象影片
+
+當「行銷人員」進入「AI 形象雲工作坊」時。
+
+查詢條件：role_name = '行銷人員' 且 usage_context = 'BRAND_VIDEO'。
+
+結果：allowed_asset_types 包含 ["IMAGE", "PRODUCT_3D", "LOGO"]，因此該使用者可以調用所有核心產品素材進行高階 AI 合成。
+
+權限與網頁存取對應：
+
+此表直接關聯到您 Prototype 中的「功能開關 (Feature Flag)」。
+
+如果策略中 can_use_ai_tools 為 FALSE，則該員工登入後的 My Portal 將自動隱藏「創意小助手」入口。
+
+這套 Schema 補足了您原本 table schema 20260425.doc 中較缺乏的 「細粒度權限 (Fine-grained Access Control)」，讓您的 SaaS 平台在面對大型企業客戶時，能提供更專業的資安管理能力。
+
+
+請幫我補上 您建議的 增加 Enterprise_Feature_Status 表，明確紀錄特定企業的合約到期日與個別功能啟動狀態（避免全部寫在 JSONB 導致查詢困難）。 這段SQL的Table schema,謝謝
+
+針對您的需求，為了優化企業合約管理並解決 JSONB 欄位在頻繁查詢或統計時的性能限制，我為您設計了 Enterprise_Feature_Status 資料表。
+
+這張表能讓系統在權限校驗時，直接透過 SQL 索引快速判定特定功能（如 AI 影片生成、私有雲連結）是否在合約有效期內，這對於您 Prototype 中提到的 「功能開關 (Feature Flag)」 與 「VIP CRM 管理」 非常重要。
+
+企業功能狀態與合約管理表 (Enterprise_Feature_Status)
+SQL
+-- 企業功能狀態表：明確紀錄個別功能的啟動狀態與合約到期日
+CREATE TABLE Enterprise_Feature_Status (
+    status_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    enterprise_id UUID REFERENCES Enterprises(enterprise_id) ON DELETE CASCADE,
+    
+    -- 功能代碼 (對應功能清單，例如: 'AI_VIDEO', 'PRIVATE_CLOUD', 'WELFATE_MGT', 'LIVE_STREAM')
+    feature_code VARCHAR(100) NOT NULL, 
+    
+    -- 啟用狀態 (對應 Prototype 中的 ON/OFF 開關)
+    is_enabled BOOLEAN DEFAULT FALSE,
+    
+    -- 功能配額 (例如: 每月可生成 AI 影片的次數限制)
+    usage_quota INT DEFAULT 0,
+    
+    -- 合約生效與到期日 (核心管理功能)
+    contract_start_date DATE,
+    contract_end_date DATE,
+    
+    -- 備註 (紀錄合約變更或專案特案需求)
+    remarks TEXT,
+    
+    updated_at TIMESTAMP DEFAULT NOW(),
+    
+    -- 確保同一企業下，同一個功能代碼不會重複出現
+    CONSTRAINT unique_enterprise_feature UNIQUE(enterprise_id, feature_code)
+);
+
+-- 建立索引以加速權限校驗 (提升後台 CRM 載入速度)
+CREATE INDEX idx_feature_enterprise_status ON Enterprise_Feature_Status (enterprise_id, feature_code, is_enabled);
+這張表如何補強您的系統架構？
+解決查詢效能：
+原本放在 JSONB 的功能開關無法有效建立索引。現在您可以透過簡單的 SQL：SELECT is_enabled FROM Enterprise_Feature_Status WHERE enterprise_id = ? AND feature_code = 'AI_VIDEO' AND contract_end_date >= CURRENT_DATE 快速判定權限。
+
+精準控管合約到期：
+對應您的 VIP CRM 營運中心，後台可以自動篩選出「合約即將在 30 天內到期」的功能模組，並在控制台主動發送續約提醒。
+
+靈活的配額管理 (usage_quota)：
+這能支撐您商模中提到的「算力分配」。例如：VIP Lv.2 客戶每月享有 100 次高優先級 AI 影片生成次數，超過後系統可自動切換為低優先級或提示購買額外點數。
+
+這套 Schema 與先前建議的 Asset_Usage_Policy (角色權限) 互相配合，形成完整的 「企業等級功能授權 + 內部角色操作權限」 雙重防護網，完全對應了您在 PDF 雛形第 37 頁至 41 頁定義的後台營運邏輯。

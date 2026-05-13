@@ -1,0 +1,11 @@
+{
+    "timestamp": "2026-05-05 05:11:16",
+    "total": 1,
+    "success": [],
+    "failed": [
+        {
+            "file": "new_course_test.jpg",
+            "error": "HTTP 404"
+        }
+    ]
+}

@@ -1,0 +1,316 @@
+附檔是我製作的Mockup,可以重新整合一份新的框架和資料表嗎?
+
+根據您提供的 CAXN 企業 AI 資源共享平台 PDF Mockup，我重新梳理了系統框架，將原本的 UI 概念轉化為具備「循環經濟」邏輯的技術架構，並定義了更完整的資料表關係。
+
+一、 重新整合的系統框架 (System Architecture)
+新的框架將平台分為三個核心層級，確保「貢獻（上傳知識/素材）」能精準轉化為「消費（兌換福利/AI 功能）」。
+
+資源交換層 (Resource Exchange Layer)
+
+核心功能： 課程 (Course) 訂閱、素材授權 (Image/Asset)、福利品 (Welfare) 上架。
+
+AI 賦能： 整合 Gemini API 進行課程摘要、生成式 AI 生成影片、素材合規性檢核。
+
+價值計價層 (Clearing House Layer)
+
+點數引擎： 處理 PDF 中提到的「貢獻紀錄（賺取 pts）」與「消費紀錄（支出 pts）」。
+
+匯率控制器： 針對 VIP 等級設定不同的點數/現金轉換比（如 VIP Lv.2 為 0.6）。
+
+身份與權限層 (Identity Layer)
+
+雙重註冊： 支援企業統一編號註冊與手機號碼驗證。
+
+角色切換： 實現管理者（設定福利、審核貢獻）與使用者（學習、兌換）的無縫切換。
+
+
+二、 核心資料表設計 (Database Schema)
+為了對接您的 Mockup，我特別強化了 「貢獻權重」 與 「異業授權」 的關聯設計。
+
+1. 帳號與 VIP 體系
+SQL
+-- 企業帳號：包含註冊所需之統編與資安健康度
+CREATE TABLE Enterprises (
+    enterprise_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tax_id VARCHAR(10) UNIQUE, -- 統一編號
+    company_name VARCHAR(255),
+    vip_level INT DEFAULT 1, -- VIP 等級 (對應匯率邏輯)
+    security_score DECIMAL(5, 2), -- 資安健康度 (Mockup 亮點)
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 使用者：包含手機號碼註冊
+CREATE TABLE Users (
+    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    enterprise_id UUID REFERENCES Enterprises(enterprise_id),
+    phone_number VARCHAR(20) UNIQUE,
+    user_role VARCHAR(50), -- 企業管理者, 企業使用者
+    wallet_points DECIMAL(15, 2) DEFAULT 0.00 -- 個人錢包餘額
+);
+2. 數位資產與貢獻模組 (對應 Mockup 貢獻紀錄頁)
+SQL
+-- 數位資產表 (整合課程、素材、福利品)
+CREATE TABLE Assets (
+    asset_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_enterprise_id UUID REFERENCES Enterprises(enterprise_id),
+    asset_type VARCHAR(20), -- COURSE, IMAGE, WELFARE
+    title VARCHAR(255),
+    content_url TEXT,
+    required_points DECIMAL(15, 2), -- 兌換所需點數
+    contribution_pts_reward DECIMAL(15, 2), -- 上傳可獲得的基礎點數
+    is_compliant BOOLEAN DEFAULT FALSE -- 是否通過合規檢核
+);
+
+-- 貢獻紀錄明細 (對應 PDF 第 10 頁)
+CREATE TABLE Contribution_Logs (
+    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES Users(user_id),
+    asset_id UUID REFERENCES Assets(asset_id),
+    contribution_type VARCHAR(50), -- 上傳知識, 分享點閱
+    points_earned DECIMAL(15, 2), -- 賺取的點數
+    view_count INT DEFAULT 0, -- 點閱數 (流量分潤依據)
+    created_at TIMESTAMP DEFAULT NOW()
+);
+3. 錢包與交易核銷 (對應 PDF 第 9 頁)
+SQL
+-- 交易總表 (整合購買與兌換)
+CREATE TABLE Transaction_Ledger (
+    tx_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES Users(user_id),
+    tx_type VARCHAR(20), -- CONSUME (消費), EARN (貢獻賺取)
+    category VARCHAR(50), -- 福利, 課程, 素材
+    amount_pts DECIMAL(15, 2),
+    reference_item_id VARCHAR(50), -- 項目 ID (如 Welfare005)
+    created_at TIMESTAMP DEFAULT NOW()
+);
+三、 針對 Mockup 的功能優化建議
+動態匯率顯示： 在「個人錢包」頁面中，系統應根據資料庫中的 VIP_level 動態顯示現金比例。例如：系統偵測到用戶為 VIP Lv.2，則 UI 自動標註「目前點數現金比 0.6」。
+
+合規自動化： 當用戶在 PDF 第 10 頁進行「課程上傳」時，後端應立即觸發 Gemini API 進行「內容合規檢核」，並將結果即時寫入 is_compliant 欄位。
+
+手機號碼即帳號： 在資料庫層級，phone_number 應設定為唯一索引 (Unique Index)，以實現「手機號碼就是註冊號碼」的簡約 UX。
+
+這套框架與資料表設計完全涵蓋了您 Mockup 中的「統編註冊」、「角色切換」、「點數紀錄」與「貢獻明細」等核心頁面邏輯。您需要我針對「以課易課」的具體計算 API 提供範例嗎？
+
+請針對「以課易課」的具體計算 API 提供範例,謝謝
+
+根據您提供的 Mockup（特別是第 10 頁的貢獻紀錄）與商模文檔，**「以課易課」的核心邏輯在於將企業上傳的知識資產（課程）轉化為可量化的「貢獻點數」，並建立一套基於流量（點閱）與品質（受眾評價）**的加權算法。
+
+以下為您定義「以課易課」的計算 API 邏輯與 SQL 範例：
+
+1. 貢獻點數計算公式 (Algorithm)
+平台不只是在「上傳時」給予點數，更應在「被消費時」給予分潤，這才能達成循環經濟。
+
+總貢獻點數(Pts)=[基礎貢獻分]+([有效觀看次數]×[VIP加權係數])+[受眾評價獎勵]
+基礎貢獻分： 課程通過「合規檢核」後給予的固定點數。
+
+有效觀看次數： 異業企業員工觀看超過一定時數的次數。
+
+VIP 加權係數： 根據您 Mockup 提到的 VIP Lv.2 匯率 (如 0.6) 進行換算。
+
+2. API Endpoint 定義
+[GET] /api/v1/contribution/calculate-course-pts
+當管理員在後台點選「點數清算」或使用者查看「我的貢獻」時調用。
+
+Request 參數:
+
+user_id: 貢獻者 ID。
+
+course_id: 課程 ID。
+
+period: 結算週期（如：2026-04）。
+
+Response 範例:
+
+JSON
+{
+  "status": "success",
+  "data": {
+    "course_title": "什麼是生成式人工智慧",
+    "base_pts": 500,
+    "view_reward_pts": 8000,
+    "vip_bonus_pts": 200,
+    "total_earned": 8700,
+    "exchange_ratio": 0.6
+  }
+}
+3. 資料庫邏輯實作 (SQL & Backend Logic)
+為了支持這個計算，我們需要透過 SQL 將 Contribution_Logs（紀錄流量）與 Enterprises（紀錄匯率）進行關聯計算。
+
+SQL
+-- 模擬「以課易課」的清算邏輯
+SELECT 
+    a.title AS course_name,
+    a.contribution_pts_reward AS base_pts, -- 基礎上傳獎勵
+    COUNT(l.log_id) * 10 AS view_pts, -- 假設每 1 次分享點閱給 10 Pts
+    e.vip_level,
+    -- 根據 VIP 等級給予額外加權 (如 Lv.2 額外給予 5% 獎勵)
+    CASE 
+        WHEN e.vip_level >= 2 THEN (COUNT(l.log_id) * 10) * 0.05 
+        ELSE 0 
+    END AS vip_bonus
+FROM Assets a
+JOIN Contribution_Logs l ON a.asset_id = l.asset_id
+JOIN Users u ON l.user_id = u.user_id
+JOIN Enterprises e ON u.enterprise_id = e.enterprise_id
+WHERE a.asset_id = 'course-uuid-here' 
+  AND l.contribution_type = '分享點閱'
+GROUP BY a.asset_id, a.title, a.contribution_pts_reward, e.vip_level;
+4. 執行步驟說明 (Execution Workflow)
+課程上傳與檢核： 講師上傳課程，系統串接 Gemini API 進行內容自動摘要與合規掃描。成功後在 Contribution_Logs 寫入一筆 上傳知識 (500 Pts)。
+
+跨企業分發： 該課程顯示在「硬程 (Course)」首頁，供其他企業員工點選。
+
+即時監測： 每次點閱觸發 Contribution_Logs 的更新。這對應了您 Mockup 第 10 頁中「項目 ID: Course001 / 分享點閱 / 人(次)數: 20」的數據。
+
+點數核銷： 月底結算時，系統自動將 Contribution_Logs 統計的點數撥付至企業的 Wallets。
+
+5. 針對 Mockup 的優化建議
+在您的 Mockup 第 9 頁「我的錢包」中，可以看到「xchange01 / 貢獻交換 / 200 Pts」。這 200 Pts 建議在 UI 上標註為 「流量獎勵」 或 「異業引用分潤」，這能更直觀地激勵企業主動分享高品質的內容，達到您商模中「以貢獻換消費」的良性循環。
+
+
+
+
+你可以補充分析第11頁到第43頁的雛形嗎?
+
+根據您提供的 CAXN 企業 AI 資源共享平台 完整雛形（Prototype），我針對第 11 頁至第 43 頁的關鍵功能模組、用戶路徑與後台邏輯進行了深度分析與補充。
+
+這部分的內容主要展現了平台如何將「企業端管理」與「員工個人端應用」分流，並透過後台營運中心達成 B2B 循環經濟的閉環。
+
+1. 企業端：AI 形象雲與合規監控 (第 11-29 頁)
+這部分是平台對企業最具「生產力賦能」的核心。
+
+AI 生成與 VI 檢核路徑：
+
+素材調用： 企業能從資產庫選取已上傳的「去背圖」或「3D 形象檔」。
+
+自動化檢核： 當 AI 生成廣告後，系統會自動比對 LOGO 比例、品牌標準色。這對應了第 7 項功能「自動化品牌視覺 (VI) 檢核」。
+
+私有雲與資安監控：
+
+展示了 Private Cloud Connector 的設定介面，強調企業數據（如未公開產品規格）留在本地，僅讓 AI 提取「特徵值」進行生成。
+
+資安健康度儀表板： 透過視覺化圖表呈現外部資安掃描結果，這不僅是管理工具，也是企業獲得「VIP 標籤」的信用依據。
+
+2. 個人端：My Portal 與 創意小助手 (第 30-36 頁)
+這部分的設計重點在於 「User-Centric (以人為本)」，激勵員工參與平台貢獻。
+
+個人權益透明化：
+
+點數撥付紀錄： 顯示員工獲得福委會點數的路徑（如：節慶、績效）。
+
+我的貢獻 (My Contribution)： 紀錄個人上傳的課程或分享的次數，並顯示賺取的 Pts，這與第 10 頁的「以課易課」邏輯呼應。
+
+創意小助手 (Lite AI)：
+
+提供低門檻的 AI 工具（如：數位問候卡、社群文案生成），讓非專業行銷人員也能利用企業素材庫進行日常溝通。
+
+3. 平台營運後台：VIP CRM 與 算力管理 (第 37-43 頁)
+這是您作為平台營運商（Platform Owner）的視角，確保商業模式的可持續性。
+
+多租戶管理 (Multi-tenant Admin)：
+
+Feature Flag (功能開關)： 針對不同合約等級（Strategic VIP vs. Standard）動態開啟模組。例如：策略夥伴可開啟「直播分享」功能，一般會員則關閉。
+
+算力優先級設定： 針對 VIP 客戶分配更多的 AI 運算通道，確保生成不延遲。
+
+金流與分潤核銷中心：
+
+匯率控制器： 頁面展示了如何調整「點數/現金比」。
+
+異業合作糾紛仲裁： 針對福利品兌換產生的物流或品質問題，提供後台介入處理的機制。
+
+核心洞察與補強建議
+「貢獻」與「權限」的連結：
+在第 37 頁的 VIP CRM 中，建議增加一個「貢獻度加權」。若某企業上傳的知識課程被全平台廣泛點閱，其 VIP 等級可自動晉升，獲得更優的匯率或更多的免費 AI 算力額度。
+
+物流 API 的即時反饋：
+在第 42 頁的福利兌換中，UI 應呈現「實體物流追蹤」狀態。當員工在個人端兌換耳機時，後端應連動金流 API 進行供應商扣款，並同步物流序號。
+
+合規報告的存檔：
+第 29 頁提到的「資安掃描報告」應具備「時間軸存檔」功能，這能協助企業在進行年度審計或 ESG 報告時，直接從 CAXN 平台匯出相關數據。
+
+這份雛形已經非常完整地覆蓋了您在 CSV 功能清單 中定義的所有項次。從「企業管理者」到「一般員工」，再到「平台管理者」，三方的利益連結非常明確。
+
+您是否需要我針對其中特定的 「VIP CRM 匯率調整介面」 或 「個人帳號資產權限」 提供更詳細的邏輯描述？
+
+請針對其中特定的 「VIP CRM 匯率調整介面」 或 「個人帳號資產權限」 提供更詳細的邏輯描述？並幫我產生和補充11頁到43頁的相關資料表,謝謝
+
+根據您提供的雛形文件（PDF）第 11 頁至第 43 頁的內容架構，以及針對「VIP CRM 匯率調整」與「個人帳號資產權限」的深度需求，我為您整理了詳細的邏輯描述，並補充了對應的資料表設計。
+
+一、 特定模組邏輯深度描述
+1. VIP CRM 匯率調整介面 (後台營運中心)
+此模組位於平台後台（如第 37-41 頁所示），其核心是將「商業合約」轉化為「系統參數」。
+
+動態匯率邏輯： 系統支援「全球通用匯率」與「企業專屬匯率」。當後台管理員調整 VIP Lv.2 的現金比為 0.6 時，受影響企業的個人錢包（第 9 頁）在進行「點數換現金」或「福利品兌換」時，會自動套用此倍率。
+
+算力優先權 (Compute Priority)： 在 AI 形象雲生成高峰期，系統根據 CRM 中的 VIP 標籤（如：★ 通道優先）進行任務排隊，優先處理策略夥伴的影片請求。
+
+2. 個人帳號資產權限 (My Portal & Folder)
+此模組連結了企業資源與個人隱私（如第 32-36 頁所示）。
+
+資產權限繼承： 一般員工僅能看到所屬企業「已購買」或「被授權」的素材；講師角色則額外擁有「上傳並鎖定內容」的權限，直到合規檢核通過後才開放給異業。
+
+個人數位專案空間： 員工使用 AI 小助手產生的數位賀卡或短文，預設儲存於「個人資料夾」，不與企業共用，除非員工手動點擊「貢獻至企業庫」以賺取積分。
+
+二、 補充資料表設計 (針對 11-43 頁功能)
+為了支撐上述雛形的完整運作，以下是需要新增或補強的資料表：
+
+1. VIP 級別與匯率設定表 (對應 VIP CRM)
+用於儲存後台管理員對不同企業等級的參數設定。
+
+SQL
+CREATE TABLE VIP_Tiers_Config (
+    tier_id INT PRIMARY KEY, -- 1: Standard, 2: Strategic VIP, 3: Expert Partner
+    tier_name VARCHAR(50),
+    cash_to_point_ratio DECIMAL(5, 2), -- 例如 0.6 (即 1 點 = 0.6 元或反向換算)
+    ai_compute_priority INT, -- 算力優先級 (1-10)
+    monthly_storage_limit_gb INT, -- 存儲空間配額
+    feature_flags JSONB -- 儲存開啟的功能模組，如 {"ai_video": true, "live": false}
+);
+2. AI 合規檢核明細表 (對應合規監控頁面)
+紀錄每一份素材或產出物通過 AI 檢核的詳細紀錄。
+
+SQL
+CREATE TABLE Compliance_Audit_Logs (
+    audit_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id UUID REFERENCES Assets(asset_id),
+    audit_type VARCHAR(50), -- VI_CHECK, LEGAL_CHECK, SECURITY_SCAN
+    score INT, -- 0-100 分
+    is_passed BOOLEAN,
+    ai_feedback_report TEXT, -- Gemini 回傳的修正建議或報告內容
+    created_at TIMESTAMP DEFAULT NOW()
+);
+3. 個人資料夾與數位專案 (對應 My Portal)
+管理員工個人的私有數位資產與專案進度。
+
+SQL
+CREATE TABLE User_Digital_Projects (
+    project_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES Users(user_id),
+    project_type VARCHAR(50), -- GREETING_CARD, SOCIAL_POST, AI_VIDEO
+    source_asset_id UUID, -- 引用自企業庫的哪張去背圖
+    generated_result_url TEXT, -- 儲存生成的檔案連結
+    is_contributed BOOLEAN DEFAULT FALSE, -- 是否已貢獻回企業庫賺點
+    created_at TIMESTAMP DEFAULT NOW()
+);
+4. 異業合作與授權白名單 (對應聯名廣告)
+紀錄企業間的素材交叉授權狀態。
+
+SQL
+CREATE TABLE Asset_Cross_Authorizations (
+    auth_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_enterprise_id UUID, -- 提供素材的企業
+    target_enterprise_id UUID, -- 使用素材的企業
+    asset_id UUID REFERENCES Assets(asset_id),
+    auth_expiry_date DATE, -- 授權到期日
+    status VARCHAR(20) -- ACTIVE, REVOKED
+);
+三、 雛形框架補強建議 (11-43 頁)
+11-29 頁 (企業管理層)： 重點應放在「資安掃描報告」與「VIP 算力分配」的透明化。建議 UI 增加一個「算力即時負載圖」，讓 VIP 客戶感受到通道優先的價值。
+
+30-36 頁 (個人應用層)： 在 My Portal 增加「一鍵貢獻」按鈕。當員工完成高品質數位作品後，系統提示：「將此作品貢獻至企業庫，可獲得 50 Pts 獎勵」。
+
+37-43 頁 (平台營運層)： 營運中心應具備「點數匯率即時模擬器」。管理員在調整匯率前，可先預覽全平台點數池的價值變動，降低財務風險。
+
+這套補充資料表與邏輯，能讓您的 CAXN 平台從純粹的介面雛形轉化為真正具備 財務清算 (Clearing House) 與 多租戶權限控制 (RBAC) 能力的系統架構。

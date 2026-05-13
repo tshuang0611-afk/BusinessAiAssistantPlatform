@@ -1,0 +1,336 @@
+以下為您定義「以課易課」的計算 API 邏輯與 SQL 範例：
+
+1. 貢獻點數計算公式 (Algorithm)
+平台不只是在「上傳時」給予點數，更應在「被消費時」給予分潤，這才能達成循環經濟。
+
+總貢獻點數(Pts)=[基礎貢獻分]+([有效觀看次數]×[VIP加權係數])+[受眾評價獎勵]
+基礎貢獻分： 課程通過「合規檢核」後給予的固定點數。
+
+有效觀看次數： 異業企業員工觀看超過一定時數的次數。
+
+VIP 加權係數： 根據您 Mockup 提到的 VIP Lv.2 匯率 (如 0.6) 進行換算。
+
+2. API Endpoint 定義
+[GET] /api/v1/contribution/calculate-course-pts
+當管理員在後台點選「點數清算」或使用者查看「我的貢獻」時調用。
+
+Request 參數:
+
+user_id: 貢獻者 ID。
+
+course_id: 課程 ID。
+
+period: 結算週期（如：2026-04）。
+
+Response 範例:
+
+JSON
+{
+  "status": "success",
+  "data": {
+    "course_title": "什麼是生成式人工智慧",
+    "base_pts": 500,
+    "view_reward_pts": 8000,
+    "vip_bonus_pts": 200,
+    "total_earned": 8700,
+    "exchange_ratio": 0.6
+  }
+}
+3. 資料庫邏輯實作 (SQL & Backend Logic)
+為了支持這個計算，我們需要透過 SQL 將 Contribution_Logs（紀錄流量）與 Enterprises（紀錄匯率）進行關聯計算。
+
+SQL
+-- 模擬「以課易課」的清算邏輯
+SELECT 
+    a.title AS course_name,
+    a.contribution_pts_reward AS base_pts, -- 基礎上傳獎勵
+    COUNT(l.log_id) * 10 AS view_pts, -- 假設每 1 次分享點閱給 10 Pts
+    e.vip_level,
+    -- 根據 VIP 等級給予額外加權 (如 Lv.2 額外給予 5% 獎勵)
+    CASE 
+        WHEN e.vip_level >= 2 THEN (COUNT(l.log_id) * 10) * 0.05 
+        ELSE 0 
+    END AS vip_bonus
+FROM Assets a
+JOIN Contribution_Logs l ON a.asset_id = l.asset_id
+JOIN Users u ON l.user_id = u.user_id
+JOIN Enterprises e ON u.enterprise_id = e.enterprise_id
+WHERE a.asset_id = 'course-uuid-here' 
+  AND l.contribution_type = '分享點閱'
+GROUP BY a.asset_id, a.title, a.contribution_pts_reward, e.vip_level;
+4. 執行步驟說明 (Execution Workflow)
+課程上傳與檢核： 講師上傳課程，系統串接 Gemini API 進行內容自動摘要與合規掃描。成功後在 Contribution_Logs 寫入一筆 上傳知識 (500 Pts)。
+
+跨企業分發： 該課程顯示在「硬程 (Course)」首頁，供其他企業員工點選。
+
+即時監測： 每次點閱觸發 Contribution_Logs 的更新。這對應了您 Mockup 第 10 頁中「項目 ID: Course001 / 分享點閱 / 人(次)數: 20」的數據。
+
+點數核銷： 月底結算時，系統自動將 Contribution_Logs 統計的點數撥付至企業的 Wallets。
+
+5. 針對 Mockup 的優化建議
+在您的 Mockup 第 9 頁「我的錢包」中，可以看到「xchange01 / 貢獻交換 / 200 Pts」。這 200 Pts 建議在 UI 上標註為 「流量獎勵」 或 「異業引用分潤」，這能更直觀地激勵企業主動分享高品質的內容，達到您商模中「以貢獻換消費」的良性循環。
+
+
+附檔是近期討論的API,請依據我的雛型文件進行調整與補充相關的API,並把程式範例寫出,感謝
+
+根據您提供的 20260426 API串接.doc 內容與之前的 CAXN 雛型文件 (Page 11-43)，我為您重新整合並補充了更完整的 API 清單與程式碼實作範例。
+
+這次補充的重點在於：企業功能授權驗證、資產使用權限過濾、福利品物流核銷以及自動化分潤清算。
+
+一、 擴展 API 清單與邏輯說明
+1. 企業功能與權限檢核 (對應第 37-41 頁)
+在調用 AI 或福利模組前，系統需檢查該企業是否已啟動該功能及合約是否到期。
+
+Endpoint: GET /api/v1/enterprise/feature-check
+
+邏輯： 查詢 Enterprise_Feature_Status 表，確認 is_enabled 為 true 且在 contract_end_date 內。
+
+2. 個人資產與場景過濾 (對應第 32-36 頁)
+當員工在製作賀卡或影片時，系統根據其角色自動過濾可用的素材。
+
+Endpoint: GET /api/v1/assets/filtered-list
+
+邏輯： 結合 Asset_Usage_Policy 與 Assets 表，過濾出符合 usage_context 的素材。
+
+3. 福利品物流下單 (對應第 42 頁)
+處理點數扣除後的物流資訊寫入。
+
+Endpoint: POST /api/v1/welfare/redeem-order
+
+二、 程式碼實作範例 (Node.js/Express)
+這裡展示如何整合 功能開關 與 權限過濾 的邏輯。
+
+1. 企業功能開關與權限過濾 API
+這個 API 用於前端載入時，決定顯示哪些素材與功能。
+
+JavaScript
+const express = require('express');
+const router = express.Router();
+const db = require('./db'); // 假設的 DB 連線
+
+// 取得過濾後的資產清單 (根據角色與場景)
+router.get('/assets/filtered-list', async (req, res) => {
+    const { userId, context } = req.query; // context: 'DIGITAL_CARD' 或 'BRAND_VIDEO'
+
+    try {
+        // 1. 取得使用者角色與企業 ID
+        const user = await db('Users').where({ user_id: userId }).first();
+        
+        // 2. 檢查企業是否具備該功能的合約權限 (Enterprise_Feature_Status)
+        const featureStatus = await db('Enterprise_Feature_Status')
+            .where({ 
+                enterprise_id: user.enterprise_id, 
+                feature_code: context === 'BRAND_VIDEO' ? 'AI_VIDEO' : 'WELFATE_MGT',
+                is_enabled: true 
+            })
+            .where('contract_end_date', '>=', new Date())
+            .first();
+
+        if (!featureStatus) {
+            return res.status(403).json({ error: '您的企業尚未開通此功能或合約已到期' });
+        }
+
+        // 3. 根據角色與場景取得素材策略 (Asset_Usage_Policy)
+        const policy = await db('Asset_Usage_Policy')
+            .where({ 
+                enterprise_id: user.enterprise_id, 
+                role_name: user.user_role,
+                usage_context: context 
+            }).first();
+
+        // 4. 根據策略拉取素材
+        const allowedTypes = policy.allowed_asset_types; // 例如 ["IMAGE", "LOGO"]
+        const assets = await db('Assets')
+            .where({ owner_enterprise_id: user.enterprise_id })
+            .whereIn('asset_type', allowedTypes)
+            .andWhere('is_compliant', true);
+
+        res.json({ assets, canUseAI: policy.can_use_ai_tools });
+    } catch (error) {
+        res.status(500).json({ error: '系統錯誤' });
+    }
+});
+2. 福利品下單與物流串接 API
+實作點數扣除與 Welfare_Orders 寫入。
+
+JavaScript
+router.post('/welfare/redeem-order', async (req, res) => {
+    const { userId, assetId, shippingAddress } = req.body;
+
+    const trx = await db.transaction();
+    try {
+        // 1. 檢查點數是否充足
+        const user = await trx('Users').where({ user_id: userId }).forUpdate().first();
+        const item = await trx('Assets').where({ asset_id: assetId }).first();
+
+        if (user.wallet_points < item.required_points) {
+            throw new Error('點數不足');
+        }
+
+        // 2. 扣除點數並記錄交易
+        await trx('Users').where({ user_id: userId }).decrement('wallet_points', item.required_points);
+        
+        const [order] = await trx('Welfare_Orders').insert({
+            buyer_user_id: userId,
+            asset_id: assetId,
+            points_spent: item.required_points,
+            order_status: 'PAID',
+            shipping_address: shippingAddress
+        }).returning('*');
+
+        await trx('Transaction_Ledger').insert({
+            user_id: userId,
+            tx_type: 'CONSUME',
+            category: 'WELFARE',
+            amount_pts: item.required_points,
+            reference_id: order.order_id
+        });
+
+        await trx.commit();
+        res.json({ message: '兌換成功', orderId: order.order_id });
+    } catch (error) {
+        await trx.rollback();
+        res.status(400).json({ error: error.message });
+    }
+});
+三、 針對雛型文件的補充分析 (Page 11-43)
+AI 算力監控 API (對應第 25-29 頁)：
+
+建議補充： GET /api/v1/ai/compute-status
+
+用途： 讓 VIP 客戶在前端看到「算力通道：優先 (VIP Lv.2)」的狀態文字。
+
+電子賀卡發送 Webhook (對應第 32 頁)：
+
+建議補充： 當員工點擊「發送」時，系統應調用一個通知 API，將生成的賀卡連結透過 LINE/Email 發送給收件人，並回傳 Contribution_Logs 紀錄。
+
+異業結算報告 API (對應第 43 頁)：
+
+建議補充： GET /api/v1/admin/settlement-report
+
+用途： 讓平台營運方一鍵產出本月所有企業的點數消耗與貢獻分潤明細。
+
+這套 API 修訂方案配合了您最新的 Table Schema (包含 Usage_Policy 與 Feature_Status)，能確保在程式層級精準執行「權限隔離」與「合規核銷」。您需要我針對 「Gemini AI 生成後的自動核銷回傳 (Callback)」 寫出更細節的邏輯嗎？
+
+我需要您針對 「Gemini AI 生成後的自動核銷回傳 (Callback)」 寫出更細節的邏輯,感謝
+
+針對您的需求，為了完善 CAXN 企業 AI 協作平台 的自動化流程，我將詳細定義 「Gemini AI 生成後的自動核銷回傳 (Callback)」 的邏輯。
+
+這段邏輯的核心在於：當 Gemini 完成影片或賀卡生成後，系統必須自動觸發 VI 品牌檢核，並根據檢核結果決定是否正式扣除點數與寫入資產庫。
+
+Gemini AI 自動核銷回傳流程邏輯
+非同步觸發： 後端調用 Gemini 生成 API 後，不直接等待結果，而是提供一個 callback_url。
+
+多維度檢核： Gemini 回傳結果時，同步夾帶 AI 檢核報告（LOGO 位置、色碼正確性、合規文字）。
+
+狀態冪等性： 確保同一任務不會重複扣點。
+
+自動結算： 只有檢核通過（例如分數 > 80），系統才會將狀態改為 SUCCESS 並正式完成點數核銷。
+
+一、 回傳處理 API 實作 (Node.js)
+此 API 負責接收 AI 運算後的結果並執行資料庫核銷。
+
+JavaScript
+const express = require('express');
+const router = express.Router();
+const db = require('./db');
+
+/**
+ * [POST] /api/v1/ai/callback
+ * 接收 Gemini 生成任務完成後的通知
+ */
+router.post('/ai/callback', async (req, res) => {
+    const { taskId, outputUrl, auditScore, auditReport, status } = req.body;
+
+    const trx = await db.transaction();
+    try {
+        // 1. 查找任務並鎖定，防止重複處理 (Idempotency)
+        const task = await trx('AI_Generation_Tasks')
+            .where({ task_id: taskId, status: 'PROCESSING' })
+            .forUpdate()
+            .first();
+
+        if (!task) {
+            return res.status(200).json({ message: '任務已處理或不存在' });
+        }
+
+        if (status === 'COMPLETED' && auditScore >= 80) {
+            // 2. 檢核通過：正式更新任務狀態與產出連結
+            await trx('AI_Generation_Tasks')
+                .where({ task_id: taskId })
+                .update({
+                    output_url: outputUrl,
+                    vi_audit_score: auditScore,
+                    status: 'SUCCESS',
+                    completed_at: new Date()
+                });
+
+            // 3. 寫入合規日誌 (對應 Compliance_Audit_Logs 表)
+            await trx('Compliance_Audit_Logs').insert({
+                asset_id: task.source_asset_id,
+                audit_type: 'VI_CHECK',
+                score: auditScore,
+                is_passed: true,
+                ai_feedback_report: JSON.stringify(auditReport)
+            });
+
+            // 4. 正式寫入 Transaction_Ledger (此時點數才算真正「消耗」完畢)
+            await trx('Transaction_Ledger').insert({
+                user_id: task.user_id,
+                tx_type: 'CONSUME',
+                category: 'AI_SERVICE',
+                amount_pts: task.points_reserved,
+                reference_id: taskId,
+                description: `AI 生成成功核銷: 任務 ${taskId}`
+            });
+
+        } else {
+            // 5. 檢核失敗：標記失敗原因，並退還預扣點數 (選配)
+            await trx('AI_Generation_Tasks')
+                .where({ task_id: taskId })
+                .update({
+                    status: 'FAILED',
+                    vi_audit_score: auditScore,
+                    error_log: '品牌檢核未通過'
+                });
+            
+            // 退還點數邏輯...
+        }
+
+        await trx.commit();
+        res.status(200).send('CALLBACK_PROCESSED');
+
+    } catch (error) {
+        await trx.rollback();
+        console.error('AI Callback 處理失敗:', error);
+        res.status(500).send('RETRY_LATER');
+    }
+});
+二、 雛型文件補強建議 (對應第 11-29 頁)
+根據上述邏輯，建議在您的 Prototype 中補充以下介面細節：
+
+AI 生成等待區 (Page 15)：
+
+增加一個 「VI 檢核中...」 的進度條狀態。這能讓使用者知道系統正在自動核對品牌規範，而不是單純的讀取。
+
+檢核詳情彈窗 (Page 29)：
+
+當 auditScore 回傳後，提供一個 UI 視窗展示 ai_feedback_report。
+
+內容應包含：「LOGO 偏移 2 像素」 或 「背景色碼與品牌手冊不符」。這正是您商模中 「AI 協作」 的核心價值。
+
+點數異動提醒 (Page 9)：
+
+在「我的錢包」中，點數扣除應標註為 「AI 生成結算 (TaskID: XXX)」，並與 Callback 完成的時間點對齊。
+
+三、 相關資料表欄位微調
+為了對接 Callback 邏輯，建議在 AI_Generation_Tasks 表中增加以下欄位：
+
+points_reserved (DECIMAL)：預扣點數。
+
+status (Enum)：PENDING (待處理), PROCESSING (生成中), SUCCESS (核銷成功), FAILED (檢核失敗)。
+
+error_log (Text)：儲存 AI 檢核失敗的具體原因。
+
+這套 Callback 邏輯實現了您 PDF 雛形中 「自動化」 與 「合規化」 的願景，確保企業在共享資源時，產出的內容永遠符合品牌標準。
+

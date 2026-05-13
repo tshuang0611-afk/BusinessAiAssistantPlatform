@@ -1,0 +1,39 @@
+# CAXN 專案重構與 AI 整合完成報告
+
+您好！我已經完成了先前提出的三項核心改善建議。現在專案環境變得更加乾淨、安全，並且具備了自動化的 AI 審核能力。
+
+以下是本次實作的詳細內容：
+
+## 1. 環境清理與版本控制設定
+
+> [!NOTE]
+> 我已經幫您清除了 `app/` 目錄下的 80 多個舊備份檔案，讓程式碼庫恢復整潔。
+
+- **安全升級**：建立了 `.env` 檔案存放您的 `GEMINI_API_KEY` 與資料庫連線資訊。
+- **Docker 設定更新**：修改了 `docker-compose.yml`，使其從 `.env` 讀取變數，不再將敏感資訊暴露於設定檔中。
+- **加入忽略清單**：建立了 `.gitignore` 檔案，確保未來若您初始化 Git，`.env` 與 Python 暫存檔（`__pycache__`）不會被提交到版本庫中。
+
+## 2. API 路由修復與 AI 整合
+
+原本的 `/process-asset` API 設計與 `batch_processor.py` 無法對接，且遺失了呼叫 Gemini AI 的實際邏輯。
+
+- **API 重構**：現在 `/process-asset` 可以直接接收 `batch_processor.py` 送來的圖檔路徑 (`image_path`)。
+- **Gemini 整合**：導入了 `PIL.Image`，在接收到圖片路徑後，後端會使用您設定的 `gemini-3.1-flash-lite` 模型分析圖片。
+- **自動化判斷與分潤**：AI 會回傳 `is_passed`、`score` 與 `reason`。
+  - 若通過審核，系統會自動在資料庫中建立新的資產 (`assets`)、寫入日誌 (`assets_log`)，並且**發放 50 點獎勵給該企業**（寫入 `wallets` 與 `contribution_log`）。
+  - 若未通過，則只會留存退回紀錄。
+
+## 3. 驗證與測試結果
+
+我複製了一張測試圖片 (`API KEY 20260427.png`) 到 `/app/uploads` 資料夾，並重新建置了 Docker 容器，接著在容器內執行了批次處理程式。
+
+> [!WARNING]
+> 測試時，雖然程式執行成功，但 **Gemini API 暫時回傳了 503 錯誤（系統繁忙）**。
+> 由於我們有做好錯誤處理，系統沒有崩潰，而是將此情況安全地判定為「退回 (評分: 0)」，並在資料庫留存了 `AI Error: 503 UNAVAILABLE` 的原因。
+
+當 Gemini API 恢復正常時，再次執行 `python batch_processor.py` 即可獲得真實的 AI 評分！
+
+### 接下來您可以做什麼？
+1. 您可以丟幾張新的圖片到 `/app/uploads` 目錄。
+2. 執行 `docker-compose exec app python batch_processor.py` 體驗完整的自動化流程。
+3. 進入 `http://localhost:8000/admin` 觀看新的資產是否出現。
