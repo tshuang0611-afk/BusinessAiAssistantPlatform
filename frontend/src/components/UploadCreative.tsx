@@ -1,203 +1,216 @@
-import { useState, useRef, useEffect } from 'react'
-import { ArrowLeft, Sparkles, UploadCloud, CheckCircle, RefreshCw, Copy, Check } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { UploadCloud, ArrowLeft, Video, Image as ImageIcon, Mail, CheckCircle, Info } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
-interface Asset { asset_id: string; title: string; asset_type: string }
-interface UploadCreativeProps { onBack: () => void; onSuccess: () => void }
+interface Props {
+  onBack: () => void
+  onSuccess: () => void
+}
 
-const CREATIVE_TYPES = [
-  { value: 'VIDEO_AD', label: '🎬 形象影片', accept: 'video/*', ext: 'MP4/MOV' },
-  { value: 'ECARD',    label: '🎴 電子賀卡', accept: 'image/*', ext: 'JPG/PNG' },
-  { value: 'COURSE',   label: '📚 線上課程', accept: 'video/*', ext: 'MP4/MOV' },
+const ASSET_TYPE_OPTIONS = [
+  { value: 'VIDEO_AD', label: '🎬 形象影片', desc: '由 AI 工具生成的品牌/產品影片（.mp4）', accept: 'video/*', icon: <Video size={20} /> },
+  { value: 'ECARD',   label: '🎴 電子賀卡', desc: '由 AI 工具生成的賀卡圖檔（.jpg / .png）', accept: 'image/*', icon: <Mail size={20} /> },
+  { value: 'IMAGE',   label: '🖼️ AI 圖像',  desc: '由 AI 工具生成的圖片資產（.jpg / .png）', accept: 'image/*', icon: <ImageIcon size={20} /> },
 ]
 
-export default function UploadCreative({ onBack, onSuccess }: UploadCreativeProps) {
+export default function UploadCreative({ onBack, onSuccess }: Props) {
   const { token } = useAuth()
-  const [step, setStep] = useState(1)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const [assetType, setAssetType] = useState('VIDEO_AD')
-  const [materials, setMaterials] = useState<Asset[]>([])
-  const [selectedMaterial, setSelectedMaterial] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [script, setScript] = useState<Record<string, unknown> | null>(null)
-  const [scriptLoading, setScriptLoading] = useState(false)
-  const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [tags, setTags] = useState('')
   const [requiredPoints, setRequiredPoints] = useState('100')
+  const [file, setFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    fetch('http://localhost:8000/api/assets')
-      .then(r => r.json())
-      .then(d => { if (d.status === 'success') setMaterials(d.data.filter((a: Asset) => a.asset_type === 'IMAGE')) })
-  }, [])
+  const currentType = ASSET_TYPE_OPTIONS.find(t => t.value === assetType)!
 
-  const generateScript = async () => {
-    if (!prompt.trim()) { setError('請填寫需求描述'); return }
-    setScriptLoading(true); setError('')
-    try {
-      const res = await fetch('http://localhost:8000/api/ai/generate-creative', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ asset_id: selectedMaterial, prompt, output_type: assetType === 'ECARD' ? 'ECARD' : 'VIDEO' })
-      })
-      const data = await res.json()
-      if (res.ok) { setScript(data.result); setStep(3) }
-      else setError(data.detail || '生成失敗')
-    } catch { setError('網路錯誤') }
-    setScriptLoading(false)
+  const handleFile = (f: File) => {
+    setFile(f)
+    setError('')
+    const isVideo = f.type.startsWith('video/')
+    if (isVideo) {
+      setPreview(URL.createObjectURL(f))
+    } else {
+      const reader = new FileReader()
+      reader.onload = e => setPreview(e.target?.result as string)
+      reader.readAsDataURL(f)
+    }
   }
 
-  const copyScript = () => {
-    navigator.clipboard.writeText(JSON.stringify(script, null, 2))
-    setCopied(true); setTimeout(() => setCopied(false), 2000)
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setDragOver(false)
+    const f = e.dataTransfer.files[0]
+    if (f) handleFile(f)
   }
 
-  const handlePublish = async () => {
-    if (!file || !title.trim()) { setError('請上傳檔案並填寫標題'); return }
+  const handleSubmit = async () => {
+    if (!file) { setError('請選擇要上傳的檔案'); return }
+    if (!title.trim()) { setError('請填寫資產名稱'); return }
+    if (!requiredPoints || isNaN(Number(requiredPoints)) || Number(requiredPoints) <= 0) {
+      setError('請填寫有效的定價點數'); return
+    }
+
     setUploading(true); setError('')
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('title', title)
-    fd.append('asset_type', assetType)
-    fd.append('required_points', requiredPoints)
-    fd.append('associated_asset_id', selectedMaterial)
-    fd.append('ai_script', JSON.stringify(script))
     try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('title', title.trim())
+      formData.append('description', description.trim())
+      formData.append('tags', tags.trim())
+      formData.append('asset_type', assetType)
+      formData.append('required_points', requiredPoints)
+      formData.append('publish_category', 'CREATIVE')
+
       const res = await fetch('http://localhost:8000/api/upload/creative', {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
       })
       const data = await res.json()
-      if (res.ok) { setStep(5) }
-      else setError(data.detail || '上架失敗')
-    } catch { setError('網路錯誤') }
+      if (res.ok) {
+        setSuccess(true)
+        setTimeout(() => onSuccess(), 2000)
+      } else {
+        setError(data.detail || '上傳失敗，請稍後再試')
+      }
+    } catch {
+      setError('網路連線錯誤，請稍後再試')
+    }
     setUploading(false)
   }
 
-  const stepLabel = ['', '選擇類型與素材', '生成文案腳本', '複製腳本去外部工具生成', '上傳成品並發布', '完成']
-  const currentType = CREATIVE_TYPES.find(t => t.value === assetType)!
+  if (success) {
+    return (
+      <div style={{ maxWidth: '600px', margin: '3rem auto', textAlign: 'center' }}>
+        <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎉</div>
+        <h2 style={{ color: '#10b981' }}>上架成功！</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>AI 創意內容已上架，消費者可使用點數解鎖存取。即將跳轉至資產大廳...</p>
+        <CheckCircle size={48} color="#10b981" style={{ marginTop: '1rem' }} />
+      </div>
+    )
+  }
 
   return (
-    <div style={{ maxWidth: '760px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
-        <button onClick={step === 1 ? onBack : () => setStep(s => s - 1)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex' }}><ArrowLeft size={20} /></button>
-        <div style={{ flex: 1 }}>
-          <h2 style={{ margin: 0 }}>AI 創意內容上架</h2>
-          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>步驟 {step}/4：{stepLabel[step]}</p>
+    <div style={{ maxWidth: '720px', margin: '0 auto' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.75rem' }}>
+        <button onClick={onBack} style={{ padding: '0.4rem 0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem' }}>
+          <ArrowLeft size={15} /> 返回
+        </button>
+        <div>
+          <h2 style={{ margin: 0 }}>✨ AI 創意內容上架</h2>
+          <p style={{ margin: '0.25rem 0 0', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+            將外部 AI 工具生成的影片或圖片上架為可購買的數位資產
+          </p>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          {[1,2,3,4].map(s => (
-            <div key={s} style={{ width: '32px', height: '4px', borderRadius: '2px', background: step >= s ? 'var(--accent-color)' : 'rgba(255,255,255,0.1)', transition: 'background 0.3s' }} />
+      </div>
+
+      {/* Info Banner */}
+      <div style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '10px', padding: '0.85rem 1.1rem', marginBottom: '1.5rem', display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+        <Info size={16} color="#818cf8" style={{ marginTop: '1px', flexShrink: 0 }} />
+        <p style={{ margin: 0, fontSize: '0.83rem', color: '#a5b4fc', lineHeight: 1.5 }}>
+          此功能專為上架由 <strong>外部 AI 工具</strong>（如 Sora、Runway、Midjourney 等）所產出的成品。
+          上架後，消費者需消耗指定點數才能解鎖存取。若需先產生文案腳本，請使用「AI 創作坊」。
+        </p>
+      </div>
+
+      {/* Step 1: 選擇資產類型 */}
+      <div className="glass-panel" style={{ marginBottom: '1.25rem' }}>
+        <h3 style={{ marginTop: 0, fontSize: '0.95rem', color: 'var(--text-secondary)' }}>① 選擇資產類型</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+          {ASSET_TYPE_OPTIONS.map(t => (
+            <button key={t.value} onClick={() => { setAssetType(t.value); setFile(null); setPreview(null) }}
+              style={{ padding: '1rem 0.75rem', borderRadius: '10px', cursor: 'pointer', textAlign: 'center', border: assetType === t.value ? '2px solid var(--accent-color)' : '2px solid transparent', background: assetType === t.value ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.04)', flexDirection: 'column', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span style={{ color: assetType === t.value ? 'var(--accent-color)' : 'var(--text-secondary)' }}>{t.icon}</span>
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: assetType === t.value ? 'var(--accent-color)' : 'var(--text-primary)' }}>{t.label}</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.3 }}>{t.desc}</span>
+            </button>
           ))}
         </div>
       </div>
 
-      {error && <div style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', padding: '0.75rem 1rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.875rem' }}>{error}</div>}
-
-      {/* Step 1 */}
-      {step === 1 && (
-        <div className="glass-panel" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600 }}>選擇創意類型</label>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              {CREATIVE_TYPES.map(t => (
-                <button key={t.value} onClick={() => setAssetType(t.value)}
-                  style={{ flex: 1, minWidth: '140px', padding: '0.75rem', borderRadius: '10px', cursor: 'pointer', border: assetType === t.value ? '2px solid var(--accent-color)' : '2px solid transparent', background: assetType === t.value ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.05)', color: assetType === t.value ? 'var(--accent-color)' : 'var(--text-secondary)', fontWeight: assetType === t.value ? 700 : 400 }}>
-                  {t.label}
-                </button>
-              ))}
+      {/* Step 2: 上傳檔案 */}
+      <div className="glass-panel" style={{ marginBottom: '1.25rem' }}>
+        <h3 style={{ marginTop: 0, fontSize: '0.95rem', color: 'var(--text-secondary)' }}>② 上傳 AI 生成檔案</h3>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          style={{ border: `2px dashed ${dragOver ? 'var(--accent-color)' : file ? '#10b981' : 'rgba(255,255,255,0.15)'}`, borderRadius: '12px', padding: '2rem', textAlign: 'center', cursor: 'pointer', background: dragOver ? 'rgba(99,102,241,0.07)' : 'transparent', transition: 'all 0.2s', marginBottom: '1rem' }}>
+          <input ref={fileInputRef} type="file" accept={currentType.accept} style={{ display: 'none' }} onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+          {file ? (
+            <div>
+              <CheckCircle size={28} color="#10b981" style={{ marginBottom: '0.5rem' }} />
+              <p style={{ margin: 0, fontWeight: 600, color: '#10b981' }}>{file.name}</p>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{(file.size / 1024 / 1024).toFixed(2)} MB · 點擊更換</p>
             </div>
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>參考素材 <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>（選填）</span></label>
-            <select value={selectedMaterial} onChange={e => setSelectedMaterial(e.target.value)} style={{ width: '100%', padding: '0.65rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-primary)' }}>
-              <option value="">不選擇素材（純文字生成）</option>
-              {materials.map(a => <option key={a.asset_id} value={a.asset_id}>{a.title}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>需求描述</label>
-            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={4}
-              placeholder={assetType === 'ECARD' ? '例：製作中秋節電子賀卡，感謝客戶一年來的支持...' : '例：製作科技感企業形象宣傳影片，主打 AI 資源共享服務...'}
-              style={{ width: '100%', resize: 'vertical', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '0.75rem', color: 'var(--text-primary)', boxSizing: 'border-box' }} />
-          </div>
-          <button className="primary" onClick={() => { setError(''); setStep(2); generateScript() }} style={{ padding: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-            <Sparkles size={18} /> 生成 AI 文案腳本（扣 20 點）
-          </button>
-        </div>
-      )}
-
-      {/* Step 2 — Loading */}
-      {step === 2 && (
-        <div className="glass-panel" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
-          <div style={{ width: '48px', height: '48px', borderRadius: '50%', border: '3px solid rgba(99,102,241,0.2)', borderTopColor: 'var(--accent-color)', animation: 'spin 1s linear infinite', margin: '0 auto 1.5rem' }} />
-          <p style={{ color: 'var(--text-secondary)' }}>Gemini 正在生成文案腳本，通常需要 10-20 秒...</p>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        </div>
-      )}
-
-      {/* Step 3 — Show script */}
-      {step === 3 && script && (
-        <div className="glass-panel" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ color: 'var(--accent-color)' }}>✨ AI 文案腳本已生成</strong>
-            <button onClick={copyScript} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--glass-border)', borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', color: copied ? '#10b981' : 'var(--text-secondary)', fontSize: '0.85rem' }}>
-              {copied ? <><Check size={14} /> 已複製</> : <><Copy size={14} /> 複製全部</>}
-            </button>
-          </div>
-          <pre style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'auto', maxHeight: '300px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {JSON.stringify(script, null, 2)}
-          </pre>
-          <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '0.875rem', fontSize: '0.875rem', color: '#fbbf24' }}>
-            💡 請複製上方腳本，前往 <strong>Google Veo / Imagen / Nano Banana</strong> 等外部工具生成最終{assetType === 'ECARD' ? '賀卡圖片' : '影片'}，然後回來上傳成品。
-          </div>
-          <button className="primary" onClick={() => setStep(4)} style={{ padding: '0.85rem' }}>
-            成品已準備好，繼續上傳 →
-          </button>
-        </div>
-      )}
-
-      {/* Step 4 — Upload file */}
-      {step === 4 && (
-        <div className="glass-panel" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>作品標題</label>
-            <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="為這個作品取個好名字..." style={{ width: '100%' }} />
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>上架定價（點數）</label>
-            <input type="number" value={requiredPoints} onChange={e => setRequiredPoints(e.target.value)} min={0} style={{ width: '100%' }} />
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600 }}>上傳成品檔案 <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>（{currentType.ext}）</span></label>
-            <div onClick={() => fileRef.current?.click()}
-              style={{ border: '2px dashed var(--glass-border)', borderRadius: '10px', padding: '2.5rem', textAlign: 'center', cursor: 'pointer' }}>
-              <UploadCloud size={36} color="var(--text-secondary)" style={{ marginBottom: '0.75rem' }} />
-              {file ? <p style={{ margin: 0, color: 'var(--accent-color)', fontWeight: 600 }}>✅ {file.name}</p> : <p style={{ margin: 0, color: 'var(--text-secondary)' }}>點擊選擇{currentType.label}成品</p>}
+          ) : (
+            <div>
+              <UploadCloud size={32} color="rgba(255,255,255,0.25)" style={{ marginBottom: '0.75rem' }} />
+              <p style={{ margin: 0, fontWeight: 500 }}>拖曳或點擊選擇檔案</p>
+              <p style={{ margin: '0.3rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                {assetType === 'VIDEO_AD' ? 'MP4 / WebM / MOV 影片' : 'JPG / PNG / WEBP 圖片'}
+              </p>
             </div>
-            <input ref={fileRef} type="file" accept={currentType.accept} style={{ display: 'none' }} onChange={e => e.target.files?.[0] && setFile(e.target.files[0])} />
-          </div>
-          <button className="primary" onClick={handlePublish} disabled={uploading || !file || !title.trim()}
-            style={{ padding: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-            {uploading ? <><RefreshCw size={18} style={{ animation: 'spin 1s linear infinite' }} /> 上架中...</> : '🚀 一鍵發布上架'}
-          </button>
+          )}
+        </div>
+
+        {/* 影片/圖片預覽 */}
+        {preview && assetType === 'VIDEO_AD' && (
+          <video src={preview} controls style={{ width: '100%', borderRadius: '8px', maxHeight: '240px', background: '#000' }} />
+        )}
+        {preview && assetType !== 'VIDEO_AD' && (
+          <img src={preview} alt="preview" style={{ width: '100%', borderRadius: '8px', maxHeight: '240px', objectFit: 'contain', background: '#0f172a' }} />
+        )}
+      </div>
+
+      {/* Step 3: 資產資訊與定價 */}
+      <div className="glass-panel" style={{ marginBottom: '1.25rem' }}>
+        <h3 style={{ marginTop: 0, fontSize: '0.95rem', color: 'var(--text-secondary)' }}>③ 資產資訊與定價</h3>
+
+        <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.875rem' }}>資產名稱 *</label>
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="例如：2025 品牌形象影片 - 春季限定版" />
+
+        <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.875rem' }}>描述說明</label>
+        <textarea value={description} onChange={e => setDescription(e.target.value)}
+          placeholder="說明此 AI 創意內容的用途、主題、適合情境等..."
+          style={{ width: '100%', minHeight: '80px', resize: 'vertical', boxSizing: 'border-box' }} />
+
+        <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.875rem' }}>標籤（逗號分隔）</label>
+        <input value={tags} onChange={e => setTags(e.target.value)} placeholder="品牌形象, AI 生成, 春季活動" />
+
+        <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.875rem' }}>解鎖定價（點數）*</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <input type="number" value={requiredPoints} onChange={e => setRequiredPoints(e.target.value)}
+            placeholder="100" min="1" style={{ width: '160px', marginBottom: 0 }} />
+          <p style={{ margin: 0, fontSize: '0.83rem', color: 'var(--text-secondary)' }}>
+            消費者需消耗此點數才能解鎖觀看/下載
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', color: '#ef4444', fontSize: '0.875rem' }}>
+          ❌ {error}
         </div>
       )}
 
-      {/* Step 5 — Done */}
-      {step === 5 && (
-        <div className="glass-panel" style={{ padding: '3rem 2rem', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center' }}>
-          <CheckCircle size={56} color="#10b981" />
-          <h3 style={{ margin: 0, color: '#10b981' }}>創意內容已成功上架！</h3>
-          <p style={{ color: 'var(--text-secondary)', margin: 0 }}>AI 診斷費 10 點已扣除，您的作品現在已在資產大廳公開展示。</p>
-          <div style={{ display: 'flex', gap: '1rem' }}>
-            <button onClick={onBack}>繼續上架</button>
-            <button className="primary" onClick={onSuccess}>前往資產大廳</button>
-          </div>
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <button className="primary" onClick={handleSubmit} disabled={uploading}
+          style={{ flex: 1, justifyContent: 'center', padding: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <UploadCloud size={18} />
+          {uploading ? '上架中...' : '確認上架'}
+        </button>
+        <button onClick={onBack} style={{ padding: '0.85rem 1.5rem' }}>取消</button>
+      </div>
     </div>
   )
 }

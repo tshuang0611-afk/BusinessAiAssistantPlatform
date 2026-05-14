@@ -8,4 +8,5 @@ pillow
 PyJWT
 passlib[bcrypt]
 bcrypt==3.2.2
-python-multipart
+python-multipart
+httpx

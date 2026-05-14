@@ -229,3 +229,56 @@ p {
   color: var(--text-secondary);
   line-height: 1.5;
 }
+
+/* ===== Responsive Breakpoints ===== */
+
+/* 平板 (768px 以下) */
+@media (max-width: 768px) {
+  .app-container {
+    padding: 1rem;
+  }
+
+  .header-top {
+    padding: 0.5rem 0;
+  }
+
+  .logo h1 {
+    font-size: 0.95rem;
+  }
+
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 手機 (480px 以下) */
+@media (max-width: 480px) {
+  .app-container {
+    padding: 0.75rem;
+  }
+
+  .glass-panel {
+    border-radius: 12px;
+    padding: 1.1rem;
+  }
+
+  h2 {
+    font-size: 1.3rem;
+  }
+
+  button {
+    min-height: 40px; /* iOS 點擊友好 */
+  }
+
+  input, select, textarea {
+    min-height: 44px;
+    font-size: 16px; /* 防止 iOS 自動縮放 */
+  }
+}
+
+/* 桌機保持 3 欄 Grid */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

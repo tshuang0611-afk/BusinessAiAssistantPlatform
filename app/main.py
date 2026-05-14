@@ -1,13 +1,18 @@
 import os
 import json
+import asyncio
+import hashlib
+import secrets
 import psycopg2
 import psycopg2.extras
 from psycopg2.extras import RealDictCursor
 import uuid
-from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File
-from fastapi.responses import HTMLResponse, FileResponse
+from datetime import datetime
+from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Request
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 from google import genai
 import PIL.Image
 from fastapi.middleware.cors import CORSMiddleware
@@ -155,6 +160,72 @@ def init_db():
             external_platform VARCHAR(100),
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             used_at         TIMESTAMP
+        )
+    """)
+
+    # ===== 第八階段資料表 =====
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            notification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id         UUID REFERENCES users(user_id),
+            type            VARCHAR(50) NOT NULL,
+            title           VARCHAR(255) NOT NULL,
+            content         TEXT,
+            related_id      VARCHAR(255),
+            is_read         BOOLEAN DEFAULT false,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS benefit_orders (
+            order_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            benefit_id      UUID REFERENCES enterprise_benefits(benefit_id),
+            redemption_id   UUID REFERENCES benefit_redemptions(redemption_id),
+            buyer_user_id   UUID REFERENCES users(user_id),
+            seller_enterprise_id UUID REFERENCES enterprises(enterprise_id),
+            recipient_name  VARCHAR(100),
+            recipient_phone VARCHAR(20),
+            recipient_company VARCHAR(100),
+            recipient_address TEXT,
+            delivery_method VARCHAR(30) DEFAULT 'COUPON',
+            tracking_number VARCHAR(100),
+            status          VARCHAR(20) DEFAULT 'PENDING',
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            shipped_at      TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS asset_ratings (
+            rating_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            asset_id    UUID REFERENCES assets(asset_id),
+            user_id     UUID REFERENCES users(user_id),
+            score       SMALLINT CHECK (score BETWEEN 1 AND 5),
+            comment     TEXT,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (asset_id, user_id)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS asset_favorites (
+            asset_id    UUID REFERENCES assets(asset_id),
+            user_id     UUID REFERENCES users(user_id),
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (asset_id, user_id)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS partner_platforms (
+            platform_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name        VARCHAR(100) NOT NULL,
+            api_key_hash VARCHAR(64) NOT NULL,
+            api_key_preview VARCHAR(20),
+            callback_url TEXT,
+            is_active   BOOLEAN DEFAULT true,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
@@ -879,13 +950,14 @@ async def upload_material(
 async def upload_creative(
     file: UploadFile = File(...),
     title: str = "AI 創意作品",
+    description: str = "",
+    tags: str = "",
     asset_type: str = "VIDEO_AD",
     required_points: float = 100.0,
-    associated_asset_id: str = "",
-    ai_script: str = "",
+    publish_category: str = "CREATIVE",
     current_user = Depends(require_enterprise_admin)
 ):
-    """AI 創意成品上傳（形象影片/電子賀卡/線上課程），扣 AI 診斷費後直接發布"""
+    """AI 創意成品直接上架：企業上傳由外部 AI 工具生成的影片/圖片，扣 AI 診斷費後直接發布供消費者點數解鎖"""
     ent_id = current_user.get("enterprise_id") or TEST_ENTERPRISE_ID
     import shutil
     new_asset_id = str(uuid.uuid4())
@@ -907,22 +979,23 @@ async def upload_creative(
         cur.execute("""INSERT INTO wallet_transactions (from_wallet_id, to_wallet_id, amount, transaction_type, description)
             VALUES (%s, (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid), %s, 'FEE', 'AI創意內容診斷費')""",
             (wallet['wallet_id'], PLATFORM_WALLET_OWNER_ID, AI_DIAGNOSTIC_FEE))
-        # 直接上架
-        assoc_id = associated_asset_id if associated_asset_id else None
-        cur.execute("""INSERT INTO assets (asset_id, owner_enterprise_id, asset_type, title, content_url, required_points, publish_category, associated_asset_id, ai_script)
-            VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'CREATIVE', %s, %s)""",
-            (new_asset_id, ent_id, asset_type, title, save_path, required_points, assoc_id, ai_script))
+        # 直接上架（status = COMPLETED，is_archived = true 表示已發布）
+        tag_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else []
+        cur.execute("""INSERT INTO assets (asset_id, owner_enterprise_id, asset_type, title, content_url, required_points, publish_category, ai_script)
+            VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, %s, %s)""",
+            (new_asset_id, ent_id, asset_type, title, save_path, required_points, publish_category, description))
         cur.execute("""INSERT INTO assets_log (asset_id, is_passed, reason, ai_score, status, asset_type, is_archived)
             VALUES (%s, true, 'AI創意成品直接上架', 100, 'COMPLETED', %s, true)""",
             (new_asset_id, asset_type))
         conn.commit()
-        return {"status": "success", "asset_id": new_asset_id, "message": "創意內容已上架，AI 診斷費已扣除"}
+        return {"status": "success", "asset_id": new_asset_id, "message": f"創意內容已上架，AI 診斷費 {AI_DIAGNOSTIC_FEE} 點已扣除"}
     except HTTPException: raise
     except Exception as e:
         conn.rollback()
         if os.path.exists(save_path): os.remove(save_path)
         raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
+
 
 # --- 三軌上架：軌道 C 企業福利品 ---
 
@@ -1134,7 +1207,380 @@ async def stream_asset(asset_id: str, token: str = ""):
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
 
+
+# ============================================================
+# 第八階段 API
+# ============================================================
+
+# --- 通知輔助函數 ---
+def create_notification(cur, user_id: str, ntype: str, title: str, content: str = "", related_id: str = ""):
+    cur.execute("""INSERT INTO notifications (user_id, type, title, content, related_id)
+        VALUES (%s::uuid, %s, %s, %s, %s)""",
+        (user_id, ntype, title, content, related_id))
+
+# --- SSE 通知流 ---
+# 儲存連線中的用戶佇列 { user_id: asyncio.Queue }
+_sse_queues: dict = {}
+
+@app.get("/api/notifications/stream")
+async def notification_stream(token: str = ""):
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload.get("user_id")
+    q: asyncio.Queue = asyncio.Queue()
+    _sse_queues[user_id] = q
+
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'type': 'connected', 'message': '已連線通知服務'})}\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=25.0)
+                    yield f"data: {json.dumps(msg, default=str)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            _sse_queues.pop(user_id, None)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+async def push_notification(user_id: str, ntype: str, title: str, content: str = "", related_id: str = ""):
+    """寫入 DB 並即時推送 SSE"""
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("""INSERT INTO notifications (user_id, type, title, content, related_id)
+            VALUES (%s::uuid, %s, %s, %s, %s) RETURNING notification_id, created_at""",
+            (user_id, ntype, title, content, related_id))
+        row = cur.fetchone()
+        conn.commit()
+        if user_id in _sse_queues:
+            await _sse_queues[user_id].put({"notification_id": str(row[0]), "type": ntype, "title": title, "content": content, "related_id": related_id, "created_at": str(row[1])})
+    finally: cur.close(); conn.close()
+
+@app.get("/api/notifications")
+async def get_notifications(current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT * FROM notifications WHERE user_id = %s::uuid ORDER BY created_at DESC LIMIT 50", (user_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/notifications/unread-count")
+async def get_unread_count(current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM notifications WHERE user_id = %s::uuid AND is_read = false", (user_id,))
+        return {"status": "success", "count": cur.fetchone()[0]}
+    finally: cur.close(); conn.close()
+
+@app.patch("/api/notifications/{nid}/read")
+async def mark_read(nid: str, current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE notifications SET is_read = true WHERE notification_id = %s::uuid AND user_id = %s::uuid", (nid, user_id))
+        conn.commit(); return {"status": "success"}
+    finally: cur.close(); conn.close()
+
+@app.post("/api/notifications/read-all")
+async def mark_all_read(current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE notifications SET is_read = true WHERE user_id = %s::uuid", (user_id,))
+        conn.commit(); return {"status": "success"}
+    finally: cur.close(); conn.close()
+
+# --- 統計報表 API ---
+
+@app.get("/api/enterprise/stats")
+async def enterprise_stats(current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT COALESCE(SUM(amount),0) as total_distributed FROM point_distributions WHERE enterprise_id = %s::uuid", (ent_id,))
+        distributed = float(cur.fetchone()['total_distributed'])
+        cur.execute("SELECT COUNT(*) as cnt FROM benefit_redemptions r JOIN enterprise_benefits b ON r.benefit_id = b.benefit_id WHERE b.enterprise_id = %s::uuid", (ent_id,))
+        redemptions = cur.fetchone()['cnt']
+        cur.execute("SELECT COUNT(*) as cnt FROM assets WHERE owner_enterprise_id = %s::uuid", (ent_id,))
+        assets_count = cur.fetchone()['cnt']
+        cur.execute("SELECT COALESCE(balance,0) as bal FROM wallets WHERE owner_id = %s::uuid", (ent_id,))
+        r = cur.fetchone(); wallet_balance = float(r['bal']) if r else 0
+        cur.execute("SELECT asset_type, COUNT(*) as cnt FROM assets WHERE owner_enterprise_id = %s::uuid GROUP BY asset_type", (ent_id,))
+        asset_dist = cur.fetchall()
+        cur.execute("SELECT COUNT(*) as cnt FROM users WHERE enterprise_id = %s::uuid", (ent_id,))
+        member_count = cur.fetchone()['cnt']
+        return {"status": "success", "data": {
+            "total_distributed": distributed, "redemptions": redemptions,
+            "assets_count": assets_count, "wallet_balance": wallet_balance,
+            "asset_distribution": asset_dist, "member_count": member_count
+        }}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/enterprise/points-timeline")
+async def points_timeline(current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT DATE(created_at) as date, SUM(amount) as out_amount
+            FROM point_distributions WHERE enterprise_id = %s::uuid
+            AND created_at >= NOW() - INTERVAL '30 days'
+            GROUP BY DATE(created_at) ORDER BY date
+        """, (ent_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/platform/stats")
+async def platform_stats(current_user = Depends(require_platform_admin)):
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT COUNT(*) as cnt FROM enterprises")
+        ent_count = cur.fetchone()['cnt']
+        cur.execute("SELECT COUNT(*) as cnt FROM assets")
+        asset_count = cur.fetchone()['cnt']
+        cur.execute("SELECT COALESCE(SUM(amount),0) as total FROM wallet_transactions WHERE transaction_type = 'ASSET_EXCHANGE'")
+        total_tx = float(cur.fetchone()['total'])
+        cur.execute("""SELECT e.company_name, COALESCE(SUM(pd.amount),0) as distributed
+            FROM enterprises e LEFT JOIN point_distributions pd ON e.enterprise_id = pd.enterprise_id
+            GROUP BY e.enterprise_id, e.company_name ORDER BY distributed DESC LIMIT 10""")
+        ent_ranking = cur.fetchall()
+        cur.execute("SELECT COUNT(*) as cnt FROM users WHERE status = 'PENDING'")
+        pending_users = cur.fetchone()['cnt']
+        return {"status": "success", "data": {
+            "enterprise_count": ent_count, "asset_count": asset_count,
+            "total_transaction": total_tx, "enterprise_ranking": ent_ranking,
+            "pending_users": pending_users
+        }}
+    finally: cur.close(); conn.close()
+
+# --- 福利品訂單（物流）API ---
+
+class BenefitRedeemWithOrderRequest(BaseModel):
+    delivery_method: str = "COUPON"
+    recipient_name: str = ""
+    recipient_phone: str = ""
+    recipient_company: str = ""
+    recipient_address: str = ""
+
+@app.post("/api/benefits/{benefit_id}/redeem-order")
+async def redeem_benefit_with_order(benefit_id: str, req: BenefitRedeemWithOrderRequest, current_user = Depends(get_current_user)):
+    """兌換福利品並填寫物流資訊，同時通知賣家"""
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT * FROM enterprise_benefits WHERE benefit_id = %s::uuid AND is_active = true", (benefit_id,))
+        benefit = cur.fetchone()
+        if not benefit: raise HTTPException(status_code=404, detail="福利品不存在")
+        if benefit['stock'] == 0: raise HTTPException(status_code=400, detail="此福利品已售罄")
+        cur.execute("SELECT personal_points, username FROM users WHERE user_id = %s::uuid", (user_id,))
+        u = cur.fetchone()
+        if not u or float(u['personal_points']) < float(benefit['price_points']):
+            raise HTTPException(status_code=400, detail=f"個人點數不足，需要 {benefit['price_points']} 點")
+        # 扣點
+        cur.execute("UPDATE users SET personal_points = personal_points - %s WHERE user_id = %s::uuid", (benefit['price_points'], user_id))
+        if benefit['stock'] > 0:
+            cur.execute("UPDATE enterprise_benefits SET stock = stock - 1 WHERE benefit_id = %s::uuid", (benefit_id,))
+        # 生成兌換碼
+        code = f"CAXN-{secrets.token_hex(8).upper()}"
+        cur.execute("""INSERT INTO benefit_redemptions (benefit_id, user_id, redemption_code)
+            VALUES (%s::uuid, %s::uuid, %s) RETURNING redemption_id""", (benefit_id, user_id, code))
+        redemption_id = cur.fetchone()['redemption_id']
+        # 建立訂單
+        cur.execute("""INSERT INTO benefit_orders (benefit_id, redemption_id, buyer_user_id, seller_enterprise_id,
+            recipient_name, recipient_phone, recipient_company, recipient_address, delivery_method)
+            VALUES (%s::uuid, %s::uuid, %s::uuid, %s::uuid, %s, %s, %s, %s, %s) RETURNING order_id""",
+            (benefit_id, redemption_id, user_id, benefit['enterprise_id'],
+             req.recipient_name, req.recipient_phone, req.recipient_company, req.recipient_address, req.delivery_method))
+        order_id = cur.fetchone()['order_id']
+        # 通知賣家企業管理員
+        cur.execute("SELECT user_id FROM users WHERE enterprise_id = %s::uuid AND user_role = 'ENTERPRISE_ADMIN' LIMIT 1", (benefit['enterprise_id'],))
+        seller_admin = cur.fetchone()
+        conn.commit()
+        if seller_admin and req.delivery_method != 'COUPON':
+            asyncio.create_task(push_notification(str(seller_admin['user_id']), 'ORDER_RECEIVED',
+                f"📦 新訂單：{benefit['title']}",
+                f"買家：{req.recipient_name} | {req.recipient_company} | {req.recipient_address} | {req.recipient_phone}",
+                str(order_id)))
+        return {"status": "success", "redemption_code": code, "order_id": str(order_id)}
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/enterprise/benefit-orders")
+async def get_benefit_orders(current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""SELECT bo.*, eb.title as benefit_title, u.username as buyer_username
+            FROM benefit_orders bo
+            JOIN enterprise_benefits eb ON bo.benefit_id = eb.benefit_id
+            JOIN users u ON bo.buyer_user_id = u.user_id
+            WHERE bo.seller_enterprise_id = %s::uuid ORDER BY bo.created_at DESC""", (ent_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+class ShipOrderRequest(BaseModel):
+    tracking_number: str = ""
+
+@app.patch("/api/enterprise/benefit-orders/{order_id}/ship")
+async def ship_order(order_id: str, req: ShipOrderRequest, current_user = Depends(require_enterprise_admin)):
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""UPDATE benefit_orders SET status = 'SHIPPED', tracking_number = %s, shipped_at = NOW()
+            WHERE order_id = %s::uuid AND seller_enterprise_id = %s::uuid RETURNING buyer_user_id, benefit_id""",
+            (req.tracking_number, order_id, ent_id))
+        row = cur.fetchone()
+        if not row: raise HTTPException(status_code=404, detail="訂單不存在")
+        buyer_id = str(row['buyer_user_id'])
+        conn.commit()
+        asyncio.create_task(push_notification(buyer_id, 'ORDER_SHIPPED', '📬 您的訂單已出貨！',
+            f"快遞單號：{req.tracking_number or '（無需物流）'}", order_id))
+        return {"status": "success", "message": "已標記出貨"}
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+# --- 資產評分與收藏 API ---
+
+class RatingRequest(BaseModel):
+    score: int
+    comment: str = ""
+
+@app.post("/api/assets/{asset_id}/rate")
+async def rate_asset(asset_id: str, req: RatingRequest, current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    if not (1 <= req.score <= 5): raise HTTPException(status_code=400, detail="評分須介於 1-5 之間")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""INSERT INTO asset_ratings (asset_id, user_id, score, comment)
+            VALUES (%s::uuid, %s::uuid, %s, %s)
+            ON CONFLICT (asset_id, user_id) DO UPDATE SET score = %s, comment = %s""",
+            (asset_id, user_id, req.score, req.comment, req.score, req.comment))
+        conn.commit()
+        return {"status": "success", "message": "評分已記錄"}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/assets/{asset_id}/ratings")
+async def get_ratings(asset_id: str):
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""SELECT r.score, r.comment, r.created_at, u.username
+            FROM asset_ratings r JOIN users u ON r.user_id = u.user_id
+            WHERE r.asset_id = %s::uuid ORDER BY r.created_at DESC""", (asset_id,))
+        rows = cur.fetchall()
+        avg = sum(r['score'] for r in rows) / len(rows) if rows else 0
+        return {"status": "success", "data": rows, "avg_score": round(avg, 1), "count": len(rows)}
+    finally: cur.close(); conn.close()
+
+@app.post("/api/assets/{asset_id}/favorite")
+async def add_favorite(asset_id: str, current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO asset_favorites (asset_id, user_id) VALUES (%s::uuid, %s::uuid) ON CONFLICT DO NOTHING", (asset_id, user_id))
+        conn.commit(); return {"status": "success"}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.delete("/api/assets/{asset_id}/favorite")
+async def remove_favorite(asset_id: str, current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM asset_favorites WHERE asset_id = %s::uuid AND user_id = %s::uuid", (asset_id, user_id))
+        conn.commit(); return {"status": "success"}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/users/favorites")
+async def get_favorites(current_user = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""SELECT a.asset_id, a.title, a.asset_type, a.required_points, l.ai_score, l.ai_analysis
+            FROM asset_favorites f JOIN assets a ON f.asset_id = a.asset_id
+            LEFT JOIN assets_log l ON a.asset_id = l.asset_id
+            WHERE f.user_id = %s::uuid ORDER BY f.created_at DESC""", (user_id,))
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+# --- 夥伴平台 Webhook API ---
+
+class PartnerCreateRequest(BaseModel):
+    name: str
+    callback_url: str = ""
+
+@app.post("/api/admin/partner-platforms")
+async def create_partner(req: PartnerCreateRequest, current_user = Depends(require_platform_admin)):
+    raw_key = f"caxn_{secrets.token_hex(24)}"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""INSERT INTO partner_platforms (name, api_key_hash, api_key_preview, callback_url)
+            VALUES (%s, %s, %s, %s) RETURNING platform_id""",
+            (req.name, key_hash, raw_key[:20] + "...", req.callback_url))
+        pid = cur.fetchone()['platform_id']
+        conn.commit()
+        return {"status": "success", "platform_id": str(pid), "api_key": raw_key, "warning": "請妥善保存此 API Key，僅顯示一次"}
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/admin/partner-platforms")
+async def list_partners(current_user = Depends(require_platform_admin)):
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT platform_id, name, api_key_preview, callback_url, is_active, created_at FROM partner_platforms ORDER BY created_at DESC")
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.patch("/api/admin/partner-platforms/{pid}/toggle")
+async def toggle_partner(pid: str, current_user = Depends(require_platform_admin)):
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE partner_platforms SET is_active = NOT is_active WHERE platform_id = %s::uuid", (pid,))
+        conn.commit(); return {"status": "success"}
+    finally: cur.close(); conn.close()
+
+class VerifyCodeRequest(BaseModel):
+    code: str
+    api_key: str
+
+@app.post("/api/webhook/verify-code")
+async def webhook_verify_code(req: VerifyCodeRequest):
+    """公開端點：夥伴平台驗證兌換碼"""
+    key_hash = hashlib.sha256(req.api_key.encode()).hexdigest()
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT platform_id, name, callback_url FROM partner_platforms WHERE api_key_hash = %s AND is_active = true", (key_hash,))
+        partner = cur.fetchone()
+        if not partner: raise HTTPException(status_code=401, detail="Invalid API Key")
+        cur.execute("""SELECT r.*, eb.title FROM benefit_redemptions r
+            JOIN enterprise_benefits eb ON r.benefit_id = eb.benefit_id
+            WHERE r.redemption_code = %s""", (req.code,))
+        redemption = cur.fetchone()
+        if not redemption: return {"valid": False, "reason": "兌換碼不存在"}
+        if redemption['status'] == 'USED': return {"valid": False, "reason": "兌換碼已使用", "used_at": str(redemption['used_at'])}
+        # 標記已使用
+        cur.execute("UPDATE benefit_redemptions SET status = 'USED', used_at = NOW(), external_platform = %s WHERE redemption_code = %s",
+            (partner['name'], req.code))
+        conn.commit()
+        # 非同步呼叫 callback
+        if partner['callback_url']:
+            import httpx
+            payload = {"code": req.code, "benefit_title": redemption['title'], "verified_at": str(datetime.now()), "verified_by": partner['name']}
+            asyncio.create_task(asyncio.to_thread(lambda: httpx.post(partner['callback_url'], json=payload, timeout=5)))
+        return {"valid": True, "benefit_title": redemption['title'], "redeemed_at": str(redemption['created_at'])}
+    except HTTPException: raise
+    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
