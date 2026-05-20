@@ -18,6 +18,7 @@ import PIL.Image
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth import verify_password, get_password_hash, create_access_token, decode_access_token
+from phase9_routes import router as phase9_router
 
 app = FastAPI()
 
@@ -28,6 +29,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(phase9_router)
 
 # --- 1. 配置與常數設定 ---
 UPLOADS_PATH = "/app/uploads"
@@ -225,6 +228,31 @@ def init_db():
             api_key_preview VARCHAR(20),
             callback_url TEXT,
             is_active   BOOLEAN DEFAULT true,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # ===== 第九階段資料表 =====
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            log_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id     UUID REFERENCES users(user_id),
+            action      VARCHAR(100) NOT NULL,
+            target_type VARCHAR(50),
+            target_id   VARCHAR(255),
+            detail      TEXT,
+            ip_address  VARCHAR(45),
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            token_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id     UUID REFERENCES users(user_id),
+            token_hash  VARCHAR(64) NOT NULL UNIQUE,
+            expires_at  TIMESTAMP NOT NULL,
+            revoked     BOOLEAN DEFAULT false,
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)

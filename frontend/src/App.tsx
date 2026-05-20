@@ -17,12 +17,13 @@ import Analytics from './components/Analytics'
 import OrderManager from './components/OrderManager'
 import PartnerManager from './components/PartnerManager'
 import NotificationBell from './components/NotificationBell'
+import UserCenter from './components/UserCenter'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useMediaQuery } from './hooks/useMediaQuery'
 import {
   LayoutDashboard, Wallet as WalletIcon, UploadCloud, Cloud, LogOut,
   PackageSearch, FileText, ShieldCheck, Sparkles, Users, Gift,
-  BarChart2, Package, Link, Menu, X
+  BarChart2, Package, Link, Menu, X, UserCircle
 } from 'lucide-react'
 import './index.css'
 
@@ -79,6 +80,7 @@ function MainApp() {
     { id: 'approval', label: '審核管理', icon: <ShieldCheck size={16} />, roles: ['PLATFORM_ADMIN'], badge: pendingCount },
     { id: 'partners', label: '夥伴管理', icon: <Link size={16} />, roles: ['PLATFORM_ADMIN'] },
     { id: 'wallet', label: '點數錢包', icon: <WalletIcon size={16} />, roles: ['all'] },
+    { id: 'user_center', label: '個人中心', icon: <UserCircle size={16} />, roles: ['all'] },
   ].filter(item => item.roles.includes('all') || item.roles.includes(user.role))
 
   const NavTabs = () => (
@@ -167,6 +169,7 @@ function MainApp() {
         {activeTab === 'approval'     && <AdminApproval />}
         {activeTab === 'partners'     && <PartnerManager />}
         {activeTab === 'wallet'       && <Wallet />}
+        {activeTab === 'user_center'  && <UserCenter />}
       </main>
     </div>
   )

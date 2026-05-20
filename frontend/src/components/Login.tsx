@@ -16,9 +16,9 @@ export default function Login({ onRegister }: LoginProps) {
     e.preventDefault();
     setLoading(true);
     setError('');
-
+    const BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
     try {
-      const res = await fetch('http://localhost:8000/api/auth/login', {
+      const res = await fetch(`${BASE}/api/auth/login-v2`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -26,7 +26,7 @@ export default function Login({ onRegister }: LoginProps) {
       const data = await res.json();
 
       if (res.ok && data.status === 'success') {
-        login(data.access_token, data.user);
+        login(data.access_token, data.user, data.refresh_token);
       } else {
         setError(data.detail || '登入失敗，請檢查帳號密碼。');
       }
