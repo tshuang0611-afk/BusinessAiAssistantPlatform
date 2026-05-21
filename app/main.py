@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth import verify_password, get_password_hash, create_access_token, decode_access_token
 from phase9_routes import router as phase9_router
+from phase10_routes import router as phase10_router
 
 app = FastAPI()
 
@@ -31,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(phase9_router)
+app.include_router(phase10_router)
 
 # --- 1. 配置與常數設定 ---
 UPLOADS_PATH = "/app/uploads"
@@ -256,17 +258,85 @@ def init_db():
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
-    cur.execute("SELECT user_id FROM users WHERE username = 'admin'")
+
+    # ===== 第十階段資料表 =====
+    # users 加 email 欄位（安全遷移）
+    cur.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS email VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS email_otps (
+            otp_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id     UUID REFERENCES users(user_id),
+            otp_hash    VARCHAR(64) NOT NULL,
+            purpose     VARCHAR(30) DEFAULT 'LOGIN',
+            expires_at  TIMESTAMP NOT NULL,
+            used        BOOLEAN DEFAULT false,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS trusted_devices (
+            device_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id     UUID REFERENCES users(user_id),
+            device_hash VARCHAR(64) NOT NULL,
+            user_agent  TEXT,
+            expires_at  TIMESTAMP NOT NULL,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS payment_orders (
+            order_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id         UUID REFERENCES users(user_id),
+            enterprise_id   UUID,
+            payment_type    VARCHAR(20) DEFAULT 'PERSONAL',
+            merchant_trade_no VARCHAR(30) UNIQUE NOT NULL,
+            trade_no        VARCHAR(30),
+            amount          NUMERIC(12,2) NOT NULL,
+            points_to_add   NUMERIC(12,2) NOT NULL,
+            status          VARCHAR(20) DEFAULT 'PENDING',
+            payment_method  VARCHAR(30),
+            gateway         VARCHAR(20) DEFAULT 'ECPAY',
+            raw_response    TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            paid_at         TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS withdrawal_requests (
+            request_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            enterprise_id   UUID NOT NULL,
+            applicant_id    UUID REFERENCES users(user_id),
+            amount          NUMERIC(12,2) NOT NULL,
+            bank_name       VARCHAR(100),
+            bank_code       VARCHAR(10),
+            account_name    VARCHAR(100),
+            account_number  VARCHAR(50),
+            status          VARCHAR(20) DEFAULT 'PENDING',
+            admin_note      TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processed_at    TIMESTAMP
+        )
+    """)
+
+    cur.execute("""SELECT user_id FROM users WHERE username = 'admin'""")
     if not cur.fetchone():
         pwd = get_password_hash("password123")
         cur.execute("INSERT INTO users (username, password_hash, user_role, phone_number, status) VALUES ('admin', %s, 'PLATFORM_ADMIN', '0000000000', 'APPROVED')", (pwd,))
         cur.execute("INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number, status) VALUES (%s::uuid, 'ent_admin', %s, 'ENTERPRISE_ADMIN', '1111111111', 'APPROVED')", (TEST_ENTERPRISE_ID, pwd))
         cur.execute("INSERT INTO users (enterprise_id, username, password_hash, user_role, phone_number, status) VALUES (%s::uuid, 'ent_user', %s, 'ENTERPRISE_USER', '2222222222', 'APPROVED')", (TEST_ENTERPRISE_ID, pwd))
-    
+
     conn.commit()
     cur.close()
     conn.close()
+
 
 # --- 資料模型 ---
 class LoginRequest(BaseModel):
