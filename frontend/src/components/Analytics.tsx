@@ -3,7 +3,10 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart, Bar, Legend
 } from 'recharts'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6']
 
@@ -35,10 +38,10 @@ export default function Analytics() {
   useEffect(() => {
     const headers = { Authorization: `Bearer ${token}` }
     const fetches = [
-      fetch('http://localhost:8000/api/enterprise/stats', { headers }).then(r => r.json()),
-      fetch('http://localhost:8000/api/enterprise/points-timeline', { headers }).then(r => r.json()),
+      fetch(`${API}/api/enterprise/stats`, { headers }).then(r => r.json()),
+      fetch(`${API}/api/enterprise/points-timeline`, { headers }).then(r => r.json()),
     ]
-    if (isPlatformAdmin) fetches.push(fetch('http://localhost:8000/api/platform/stats', { headers }).then(r => r.json()))
+    if (isPlatformAdmin) fetches.push(fetch(`${API}/api/platform/stats`, { headers }).then(r => r.json()))
     Promise.all(fetches).then(([s, t, p]) => {
       if (s.status === 'success') setStats(s.data)
       if (t.status === 'success') setTimeline(t.data.map((d: any) => ({ ...d, date: d.date?.slice(5) || '' })))
@@ -104,7 +107,7 @@ export default function Analytics() {
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={11}>
+                <Pie data={pieData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={(entry: any) => `${entry.name} ${((entry.percent ?? 0) * 100).toFixed(0)}%`} labelLine={false} fontSize={11}>
                   {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Pie>
                 <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }} />

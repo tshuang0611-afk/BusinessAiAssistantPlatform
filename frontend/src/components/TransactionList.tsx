@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Transaction {
   transaction_id: string;
@@ -22,7 +25,7 @@ export default function TransactionList() {
 
   useEffect(() => {
     if (token && user?.role === 'PLATFORM_ADMIN') {
-      fetch('http://localhost:8000/api/transactions', {
+      fetch(`${API}/api/transactions`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
         .then(res => res.json())

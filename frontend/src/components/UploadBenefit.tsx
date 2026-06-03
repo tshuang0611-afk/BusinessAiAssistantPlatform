@@ -1,6 +1,9 @@
 import { useState, useRef } from 'react'
 import { ArrowLeft, Gift, UploadCloud, CheckCircle } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface UploadBenefitProps { onBack: () => void; onSuccess: () => void }
 
@@ -30,7 +33,7 @@ export default function UploadBenefit({ onBack, onSuccess }: UploadBenefitProps)
     Object.entries(form).forEach(([k, v]) => fd.append(k, v))
     if (file) fd.append('file', file)
     try {
-      const res = await fetch('http://localhost:8000/api/benefits', {
+      const res = await fetch(`${API}/api/benefits`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd
       })
       const data = await res.json()

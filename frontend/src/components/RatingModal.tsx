@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { Star } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface RatingModalProps {
   assetId: string
@@ -21,7 +24,7 @@ export default function RatingModal({ assetId, assetTitle, onClose, onSuccess }:
     if (score === 0) { setError('請選擇評分星數'); return }
     setLoading(true)
     try {
-      const res = await fetch(`http://localhost:8000/api/assets/${assetId}/rate`, {
+      const res = await fetch(`${API}/api/assets/${assetId}/rate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ score, comment })

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Plus, Link, ToggleLeft, ToggleRight, Copy, AlertCircle } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Partner {
   platform_id: string
@@ -26,7 +29,7 @@ export default function PartnerManager() {
 
   const fetchPartners = async () => {
     setLoading(true)
-    const res = await fetch('http://localhost:8000/api/admin/partner-platforms', { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch(`${API}/api/admin/partner-platforms`, { headers: { Authorization: `Bearer ${token}` } })
     const data = await res.json()
     if (data.status === 'success') setPartners(data.data)
     setLoading(false)
@@ -38,7 +41,7 @@ export default function PartnerManager() {
     if (!form.name.trim()) { showToast('請輸入平台名稱'); return }
     setSubmitting(true)
     try {
-      const res = await fetch('http://localhost:8000/api/admin/partner-platforms', {
+      const res = await fetch(`${API}/api/admin/partner-platforms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(form)
@@ -56,7 +59,7 @@ export default function PartnerManager() {
   }
 
   const handleToggle = async (pid: string) => {
-    await fetch(`http://localhost:8000/api/admin/partner-platforms/${pid}/toggle`, {
+    await fetch(`${API}/api/admin/partner-platforms/${pid}/toggle`, {
       method: 'PATCH', headers: { Authorization: `Bearer ${token}` }
     })
     fetchPartners()

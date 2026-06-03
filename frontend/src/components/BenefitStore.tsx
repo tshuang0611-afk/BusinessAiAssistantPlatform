@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Gift, Tag, ShoppingCart, Coins, Copy, Check, Search, X, Truck, Package } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Benefit {
   benefit_id: string
@@ -47,8 +50,8 @@ export default function BenefitStore() {
 
   const fetchAll = async () => {
     const [bRes, pRes] = await Promise.all([
-      fetch('http://localhost:8000/api/benefits'),
-      fetch('http://localhost:8000/api/users/my-points', { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API}/api/benefits`),
+      fetch(`${API}/api/users/my-points`, { headers: { Authorization: `Bearer ${token}` } })
     ])
     const [bData, pData] = await Promise.all([bRes.json(), pRes.json()])
     if (bData.status === 'success') setBenefits(bData.data)
@@ -69,7 +72,7 @@ export default function BenefitStore() {
     }
     setRedeeming(logisticsTarget.benefit_id)
     try {
-      const res = await fetch(`http://localhost:8000/api/benefits/${logisticsTarget.benefit_id}/redeem-order`, {
+      const res = await fetch(`${API}/api/benefits/${logisticsTarget.benefit_id}/redeem-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(orderForm)
@@ -217,7 +220,7 @@ export default function BenefitStore() {
             <div key={b.benefit_id} className="glass-panel" style={{ display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
               <div style={{ height: '160px', background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 {imgFilename
-                  ? <img src={`http://localhost:8000/static/done/${imgFilename}`} alt={b.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                  ? <img src={`${API}/static/done/${imgFilename}`} alt={b.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                   : <Gift size={48} color="rgba(255,255,255,0.15)" />}
               </div>
               <div style={{ padding: '1.25rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

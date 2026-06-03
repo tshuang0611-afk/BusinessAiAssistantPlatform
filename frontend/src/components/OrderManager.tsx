@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Package, Truck, CheckCircle, Clock, ChevronDown, ChevronUp } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Order {
   order_id: string
@@ -44,7 +47,7 @@ export default function OrderManager() {
 
   const fetchOrders = async () => {
     setLoading(true)
-    const res = await fetch('http://localhost:8000/api/enterprise/benefit-orders', {
+    const res = await fetch(`${API}/api/enterprise/benefit-orders`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     const data = await res.json()
@@ -57,7 +60,7 @@ export default function OrderManager() {
   const handleShip = async (orderId: string) => {
     setSubmitting(orderId)
     try {
-      const res = await fetch(`http://localhost:8000/api/enterprise/benefit-orders/${orderId}/ship`, {
+      const res = await fetch(`${API}/api/enterprise/benefit-orders/${orderId}/ship`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ tracking_number: shippingForm[orderId] || '' })

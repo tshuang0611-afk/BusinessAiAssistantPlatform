@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell, Check, CheckCheck, X } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { Bell, CheckCheck, X } from 'lucide-react'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Notification {
   notification_id: string
@@ -35,7 +38,7 @@ export default function NotificationBell() {
     fetchNotifications()
 
     // 建立 SSE
-    const es = new EventSource(`http://localhost:8000/api/notifications/stream?token=${token}`)
+    const es = new EventSource(`${API}/api/notifications/stream?token=${token}`)
     esRef.current = es
     es.onmessage = (e) => {
       try {
@@ -59,7 +62,7 @@ export default function NotificationBell() {
   }, [])
 
   const fetchNotifications = async () => {
-    const res = await fetch('http://localhost:8000/api/notifications', { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch(`${API}/api/notifications`, { headers: { Authorization: `Bearer ${token}` } })
     const data = await res.json()
     if (data.status === 'success') {
       setNotifications(data.data)
@@ -68,13 +71,13 @@ export default function NotificationBell() {
   }
 
   const markRead = async (id: string) => {
-    await fetch(`http://localhost:8000/api/notifications/${id}/read`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } })
+    await fetch(`${API}/api/notifications/${id}/read`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } })
     setNotifications(prev => prev.map(n => n.notification_id === id ? { ...n, is_read: true } : n))
     setUnread(c => Math.max(0, c - 1))
   }
 
   const markAllRead = async () => {
-    await fetch('http://localhost:8000/api/notifications/read-all', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    await fetch(`${API}/api/notifications/read-all`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
     setUnread(0)
   }

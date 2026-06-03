@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Sparkles, Video, Image as ImageIcon, Send, Copy, Check, RefreshCw } from 'lucide-react';
+import { Sparkles, Video, Image as ImageIcon, Send, Copy, Check, RefreshCw } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'lucide-react';
 
 interface Asset {
   asset_id: string;
@@ -49,7 +52,7 @@ export default function AICreator() {
   const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/assets')
+    fetch(`${API}/api/assets`)
       .then(r => r.json())
       .then(d => {
         if (d.status === 'success') {
@@ -66,7 +69,7 @@ export default function AICreator() {
     setResult(null);
 
     try {
-      const res = await fetch('http://localhost:8000/api/ai/generate-creative', {
+      const res = await fetch(`${API}/api/ai/generate-creative`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Coins, ArrowDownCircle, ArrowUpCircle, User, CreditCard, Clock, CheckCircle, XCircle, Building2, AlertTriangle } from 'lucide-react'
+import type { ReactElement } from 'react'
+import { ArrowUpCircle, User, CreditCard, Clock, CheckCircle, XCircle, Building2, AlertTriangle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
@@ -7,7 +8,7 @@ const MIN_WITHDRAW = 5000
 
 type Tab = 'overview' | 'topup' | 'withdraw' | 'history'
 
-const STATUS_MAP: Record<string, { label: string; color: string; icon: JSX.Element }> = {
+const STATUS_MAP: Record<string, { label: string; color: string; icon: ReactElement }> = {
   PAID:    { label: '付款成功', color: '#10b981', icon: <CheckCircle size={14} /> },
   PENDING: { label: '處理中',   color: '#f59e0b', icon: <Clock size={14} /> },
   FAILED:  { label: '失敗',     color: '#ef4444', icon: <XCircle size={14} /> },

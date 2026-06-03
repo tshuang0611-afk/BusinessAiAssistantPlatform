@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { User, Key, ShoppingBag, Ticket, Heart, Copy, Check, Eye, EyeOff, Truck, CheckCircle, Clock } from 'lucide-react'
+import { User, Key, ShoppingBag, Ticket, Heart, Copy, Check, Eye, EyeOff, Truck, Clock } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
@@ -14,7 +14,7 @@ const TABS = [
 const TYPE_LABEL: Record<string, string> = { IMAGE: '🖼️ 圖片素材', VIDEO_AD: '🎬 形象影片', ECARD: '🎴 電子賀卡', COURSE: '📚 線上課程', GOODS: '🎁 福利品' }
 
 export default function UserCenter() {
-  const { user, token, logout } = useAuth()
+  const { token, logout } = useAuth()
   const [activeTab, setActiveTab] = useState('profile')
 
   // Profile state

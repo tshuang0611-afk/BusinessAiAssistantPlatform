@@ -19,7 +19,10 @@ import PartnerManager from './components/PartnerManager'
 import NotificationBell from './components/NotificationBell'
 import UserCenter from './components/UserCenter'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { useMediaQuery } from './hooks/useMediaQuery'
+import { useMediaQuery } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'./hooks/useMediaQuery'
 import {
   LayoutDashboard, Wallet as WalletIcon, UploadCloud, Cloud, LogOut,
   PackageSearch, FileText, ShieldCheck, Sparkles, Users, Gift,
@@ -40,7 +43,7 @@ function MainApp() {
 
   useEffect(() => {
     if (user?.role === 'PLATFORM_ADMIN' && token) {
-      fetch('http://localhost:8000/api/admin/pending-count', {
+      fetch(`${API}/api/admin/pending-count`, {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then(r => r.json())

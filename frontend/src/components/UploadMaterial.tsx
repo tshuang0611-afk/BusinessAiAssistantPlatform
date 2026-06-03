@@ -1,6 +1,9 @@
 import { useState, useRef } from 'react'
 import { UploadCloud, CheckCircle, XCircle, ArrowLeft } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface UploadMaterialProps { onBack: () => void; onSuccess: () => void }
 
@@ -29,7 +32,7 @@ export default function UploadMaterial({ onBack, onSuccess }: UploadMaterialProp
     const fd = new FormData()
     fd.append('file', file)
     try {
-      const res = await fetch('http://localhost:8000/api/upload/material', {
+      const res = await fetch(`${API}/api/upload/material`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd
       })
       const data = await res.json()

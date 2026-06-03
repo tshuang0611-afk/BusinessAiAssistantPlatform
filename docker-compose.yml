@@ -1,3 +1,9 @@
+# ============================================================
+# docker-compose.yml（Cloud Run / 雲端正式環境）
+# 啟動方式：docker-compose up -d
+# 本地開發請改用：docker-compose -f docker-compose.local.yml up -d
+# ============================================================
+
 services:
   db:
     image: postgres:15
@@ -26,6 +32,8 @@ services:
     volumes:
       - ./app:/app
       - ./app/uploads:/app/uploads
+      # GCS 金鑰掛載（Cloud Run 部署時改用 Secret Manager，本機測試用此）
+      - ./gcp-key.json:/app/gcp-key.json:ro
 
   frontend:
     build: ./frontend
@@ -42,7 +50,6 @@ services:
     depends_on:
       - app
 
-  # ===== Phase 9: Nginx 反向代理 =====
   nginx:
     image: nginx:alpine
     container_name: caxn_nginx

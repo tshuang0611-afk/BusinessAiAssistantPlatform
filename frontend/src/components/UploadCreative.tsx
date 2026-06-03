@@ -1,6 +1,9 @@
 import { useState, useRef } from 'react'
 import { UploadCloud, ArrowLeft, Video, Image as ImageIcon, Mail, CheckCircle, Info } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Props {
   onBack: () => void
@@ -68,7 +71,7 @@ export default function UploadCreative({ onBack, onSuccess }: Props) {
       formData.append('required_points', requiredPoints)
       formData.append('publish_category', 'CREATIVE')
 
-      const res = await fetch('http://localhost:8000/api/upload/creative', {
+      const res = await fetch(`${API}/api/upload/creative`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData

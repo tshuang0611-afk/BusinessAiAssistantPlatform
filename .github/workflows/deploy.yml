@@ -1,0 +1,113 @@
+name: 🚀 Deploy CAXN to Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # 允許手動觸發
+
+env:
+  PROJECT_ID: gen-lang-client-0780315685
+  REGION: asia-east1
+  REPO: caxn-repo
+  APP_SERVICE: caxn-app
+  WEB_SERVICE: caxn-frontend
+
+jobs:
+  deploy-backend:
+    name: 後端 API 部署
+    runs-on: ubuntu-latest
+    outputs:
+      backend_url: ${{ steps.get_url.outputs.url }}
+    steps:
+      - name: 📥 Checkout 程式碼
+        uses: actions/checkout@v4
+
+      - name: 🔐 Google 身份驗證
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: ⚙️ 設定 gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: 🐳 設定 Docker 認證
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: 🏗️ 建置後端 Image
+        run: |
+          docker build \
+            -f app/Dockerfile.cloudrun \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-app:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-app:latest \
+            ./app
+
+      - name: 📤 推送後端 Image
+        run: |
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-app:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-app:latest
+
+      - name: 🚀 部署後端到 Cloud Run
+        run: |
+          gcloud run deploy ${{ env.APP_SERVICE }} \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-app:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --memory=512Mi \
+            --quiet
+
+      - name: 🔗 取得後端 URL
+        id: get_url
+        run: |
+          URL=$(gcloud run services describe ${{ env.APP_SERVICE }} --region=${{ env.REGION }} --format="value(status.url)")
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "後端 URL: $URL"
+
+  deploy-frontend:
+    name: 前端部署
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    steps:
+      - name: 📥 Checkout 程式碼
+        uses: actions/checkout@v4
+
+      - name: 🔐 Google 身份驗證
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: ⚙️ 設定 gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: 🐳 設定 Docker 認證
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: 🏗️ 建置前端 Image（帶入後端 URL）
+        run: |
+          docker build \
+            -f frontend/Dockerfile.cloudrun \
+            --build-arg VITE_API_BASE=${{ needs.deploy-backend.outputs.backend_url }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-frontend:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-frontend:latest \
+            ./frontend
+
+      - name: 📤 推送前端 Image
+        run: |
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-frontend:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-frontend:latest
+
+      - name: 🚀 部署前端到 Cloud Run
+        run: |
+          gcloud run deploy ${{ env.WEB_SERVICE }} \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/caxn-frontend:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --memory=256Mi \
+            --quiet
+
+      - name: 🔗 取得前端 URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.WEB_SERVICE }} --region=${{ env.REGION }} --format="value(status.url)")
+          echo "::notice::🎉 前端上線：$URL"
+          echo "::notice::📖 API 文件：${{ needs.deploy-backend.outputs.backend_url }}/docs"

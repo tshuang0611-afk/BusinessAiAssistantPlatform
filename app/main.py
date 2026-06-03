@@ -35,19 +35,27 @@ app.include_router(phase9_router)
 app.include_router(phase10_router)
 
 # --- 1. 配置與常數設定 ---
-UPLOADS_PATH = "/app/uploads"
+UPLOADS_PATH = os.getenv("LOCAL_UPLOAD_DIR", "/app/uploads")
 DONE_PATH = os.path.join(UPLOADS_PATH, "done")
 TEST_ENTERPRISE_ID = "d4404339-1d19-4acf-966b-8ab460935fe6"
 SECONDARY_ENTERPRISE_ID = "77777777-7777-7777-7777-777777777777"
 PLATFORM_WALLET_OWNER_ID = "00000000-0000-0000-0000-000000000000"
 AI_DIAGNOSTIC_FEE = 10.00
 
-if not os.path.exists(DONE_PATH):
-    os.makedirs(DONE_PATH, exist_ok=True)
+os.makedirs(DONE_PATH, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=UPLOADS_PATH), name="static")
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL_NAME = "gemini-3.1-flash-lite"
+
+# 儲存健康檢查
+from storage_helper import test_connection as storage_test
+
+@app.get("/api/health/storage")
+async def health_storage():
+    """檢查 GCS 或本地儲存連線狀態"""
+    result = storage_test()
+    return result
 
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "db"),
@@ -86,6 +94,9 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(100) UNIQUE")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)")
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS wallet_transactions (
             transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -326,6 +337,15 @@ def init_db():
         )
     """)
 
+    # 確保測試企業存在（避免外鍵衝突）
+    cur.execute("SELECT enterprise_id FROM enterprises WHERE enterprise_id = %s::uuid", (TEST_ENTERPRISE_ID,))
+    if not cur.fetchone():
+        cur.execute("INSERT INTO enterprises (enterprise_id, tax_id, company_name, vip_level, security_score, enterprise_points) VALUES (%s::uuid, '12345678', 'Test Enterprise', 1, 5.0, 1000.00)", (TEST_ENTERPRISE_ID,))
+
+    cur.execute("SELECT enterprise_id FROM enterprises WHERE enterprise_id = %s::uuid", (SECONDARY_ENTERPRISE_ID,))
+    if not cur.fetchone():
+        cur.execute("INSERT INTO enterprises (enterprise_id, tax_id, company_name, vip_level, security_score, enterprise_points) VALUES (%s::uuid, '87654321', 'Secondary Enterprise', 1, 5.0, 1000.00)", (SECONDARY_ENTERPRISE_ID,))
+
     cur.execute("""SELECT user_id FROM users WHERE username = 'admin'""")
     if not cur.fetchone():
         pwd = get_password_hash("password123")
@@ -551,6 +571,36 @@ async def reject_user(user_id: str, current_user = Depends(require_platform_admi
         return {"status": "success", "message": "已拒絕該帳號申請"}
     except HTTPException: raise
     except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
+    finally: cur.close(); conn.close()
+
+@app.get("/api/admin/users")
+async def get_all_users(current_user = Depends(require_platform_admin)):
+    """取得所有使用者列表 (平台管理員)"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT u.user_id, u.username, u.user_role, u.phone_number, u.status, u.created_at, u.email,
+                   e.company_name, e.tax_id
+            FROM users u
+            LEFT JOIN enterprises e ON u.enterprise_id = e.enterprise_id
+            ORDER BY u.created_at DESC
+        """)
+        return {"status": "success", "data": cur.fetchall()}
+    finally: cur.close(); conn.close()
+
+@app.get("/api/admin/enterprises")
+async def get_all_enterprises(current_user = Depends(require_platform_admin)):
+    """取得所有企業列表 (平台管理員)"""
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT enterprise_id, company_name, tax_id, vip_level, enterprise_points, status, created_at
+            FROM enterprises
+            ORDER BY created_at DESC
+        """)
+        return {"status": "success", "data": cur.fetchall()}
     finally: cur.close(); conn.close()
 
 @app.post("/api/ai/generate-creative")
@@ -984,29 +1034,28 @@ async def self_topup(req: PersonalTopUpRequest, current_user = Depends(get_curre
     finally: cur.close(); conn.close()
 
 # --- 三軌上架：軌道 A 素材真實上傳 ---
+from storage_helper import save_file as storage_save, get_file_url, delete_file as storage_delete
 
 @app.post("/api/upload/material")
 async def upload_material(
     file: UploadFile = File(...),
     current_user = Depends(require_enterprise_admin)
 ):
-    """真實 multipart 素材上傳，儲存後送 Gemini AI 審核"""
+    """真實 multipart 素材上傳，儲存到 GCS/本地後送 Gemini AI 審核"""
     ent_id = current_user.get("enterprise_id") or TEST_ENTERPRISE_ID
-    import shutil
     new_asset_id = str(uuid.uuid4())
-    ext = os.path.splitext(file.filename)[1] if file.filename else ".bin"
-    save_filename = f"{new_asset_id}{ext}"
-    save_path = os.path.join(DONE_PATH, save_filename)
+    file_bytes = await file.read()
+    stored = storage_save(file_bytes, file.filename or f"{new_asset_id}.bin", subfolder="materials")
+    public_url = stored["url"]
+    relative_path = stored["path"]
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        with open(save_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-
         is_passed = False; ai_score = 0; reason = "審核中"; category = "IMAGE"
         summary = ""; seo_tags = []; ai_metadata = {}
         try:
-            img = PIL.Image.open(save_path)
+            import io
+            img = PIL.Image.open(io.BytesIO(file_bytes))
             prompt = "請分析這張圖片作為企業共享資源素材的適合度。請以 JSON 格式回應，包含 is_passed, score, reason, category, summary, seo_tags"
             response = client.models.generate_content(
                 model=MODEL_NAME,
@@ -1026,7 +1075,7 @@ async def upload_material(
 
         cur.execute("""INSERT INTO assets (asset_id, owner_enterprise_id, asset_type, title, content_url, contribution_pts_reward, publish_category)
             VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'MATERIAL')""",
-            (new_asset_id, ent_id, category, file.filename or save_filename, save_path, 50.0))
+            (new_asset_id, ent_id, category, file.filename or new_asset_id, public_url, 50.0))
         status_val = 'COMPLETED' if is_passed else 'REJECTED'
         cur.execute("""INSERT INTO assets_log (asset_id, is_passed, reason, ai_score, ai_metadata, ai_tags, ai_analysis, status, asset_type)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
@@ -1035,10 +1084,10 @@ async def upload_material(
             cur.execute("UPDATE wallets SET balance = balance + 50 WHERE owner_id = %s::uuid", (ent_id,))
             cur.execute("INSERT INTO contribution_log (enterprise_id, asset_id, contribution_type, reward_points) VALUES (%s::uuid, %s::uuid, 'CONTENT_CONTRIBUTION', 50)", (ent_id, new_asset_id))
         conn.commit()
-        return {"status": "success", "asset_id": new_asset_id, "is_passed": is_passed, "ai_score": ai_score, "reason": reason}
+        return {"status": "success", "asset_id": new_asset_id, "is_passed": is_passed, "ai_score": ai_score, "reason": reason, "url": public_url}
     except Exception as e:
         conn.rollback()
-        if os.path.exists(save_path): os.remove(save_path)
+        storage_delete(relative_path)
         raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
 
@@ -1055,42 +1104,41 @@ async def upload_creative(
     publish_category: str = "CREATIVE",
     current_user = Depends(require_enterprise_admin)
 ):
-    """AI 創意成品直接上架：企業上傳由外部 AI 工具生成的影片/圖片，扣 AI 診斷費後直接發布供消費者點數解鎖"""
+    """AI 創意成品直接上架：企業上傳由外部 AI 生成的影片/圖片，扣 AI 診斷費後發布供消費者點數解鎖"""
     ent_id = current_user.get("enterprise_id") or TEST_ENTERPRISE_ID
-    import shutil
     new_asset_id = str(uuid.uuid4())
-    ext = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
-    save_filename = f"{new_asset_id}{ext}"
-    save_path = os.path.join(DONE_PATH, save_filename)
+    file_bytes = await file.read()
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    stored = None
     try:
         cur.execute("SELECT wallet_id, balance FROM wallets WHERE owner_id = %s::uuid", (ent_id,))
         wallet = cur.fetchone()
         if not wallet or float(wallet['balance']) < AI_DIAGNOSTIC_FEE:
             raise HTTPException(status_code=400, detail=f"企業錢包餘額不足，需要 {AI_DIAGNOSTIC_FEE} 點 AI 診斷費")
-        with open(save_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+
+        stored = storage_save(file_bytes, file.filename or f"{new_asset_id}.mp4", subfolder="creative")
+        public_url = stored["url"]
+
         # 扣除 AI 診斷費
         cur.execute("UPDATE wallets SET balance = balance - %s WHERE wallet_id = %s", (AI_DIAGNOSTIC_FEE, wallet['wallet_id']))
         cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (AI_DIAGNOSTIC_FEE, PLATFORM_WALLET_OWNER_ID))
         cur.execute("""INSERT INTO wallet_transactions (from_wallet_id, to_wallet_id, amount, transaction_type, description)
             VALUES (%s, (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid), %s, 'FEE', 'AI創意內容診斷費')""",
             (wallet['wallet_id'], PLATFORM_WALLET_OWNER_ID, AI_DIAGNOSTIC_FEE))
-        # 直接上架（status = COMPLETED，is_archived = true 表示已發布）
         tag_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else []
         cur.execute("""INSERT INTO assets (asset_id, owner_enterprise_id, asset_type, title, content_url, required_points, publish_category, ai_script)
             VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, %s, %s)""",
-            (new_asset_id, ent_id, asset_type, title, save_path, required_points, publish_category, description))
+            (new_asset_id, ent_id, asset_type, title, public_url, required_points, publish_category, description))
         cur.execute("""INSERT INTO assets_log (asset_id, is_passed, reason, ai_score, status, asset_type, is_archived)
             VALUES (%s, true, 'AI創意成品直接上架', 100, 'COMPLETED', %s, true)""",
             (new_asset_id, asset_type))
         conn.commit()
-        return {"status": "success", "asset_id": new_asset_id, "message": f"創意內容已上架，AI 診斷費 {AI_DIAGNOSTIC_FEE} 點已扣除"}
+        return {"status": "success", "asset_id": new_asset_id, "url": public_url, "message": f"創意內容已上架，AI 診斷費 {AI_DIAGNOSTIC_FEE} 點已扣除"}
     except HTTPException: raise
     except Exception as e:
         conn.rollback()
-        if os.path.exists(save_path): os.remove(save_path)
+        if stored: storage_delete(stored["path"])
         raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
 
@@ -1109,15 +1157,11 @@ async def create_benefit(
 ):
     ent_id = current_user.get("enterprise_id")
     if not ent_id: raise HTTPException(status_code=403, detail="需要企業帳號")
-    import shutil
     image_url = None
     if file and file.filename:
-        ext = os.path.splitext(file.filename)[1]
-        fname = f"benefit_{uuid.uuid4()}{ext}"
-        fpath = os.path.join(DONE_PATH, fname)
-        with open(fpath, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        image_url = fpath
+        file_bytes = await file.read()
+        stored = storage_save(file_bytes, file.filename, subfolder="benefits")
+        image_url = stored["url"]
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute("""INSERT INTO enterprise_benefits (enterprise_id, title, description, benefit_type, price_points, image_url, stock)
@@ -1125,7 +1169,7 @@ async def create_benefit(
             (ent_id, title, description, benefit_type, price_points, image_url, stock))
         bid = cur.fetchone()['benefit_id']
         conn.commit()
-        return {"status": "success", "benefit_id": str(bid)}
+        return {"status": "success", "benefit_id": str(bid), "image_url": image_url}
     except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally: cur.close(); conn.close()
 

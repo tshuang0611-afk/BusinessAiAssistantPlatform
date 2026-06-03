@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface ManageAsset {
   asset_id: string;
@@ -21,7 +24,7 @@ export default function AssetManager() {
 
   const fetchAssets = () => {
     setLoading(true)
-    fetch('http://localhost:8000/api/manage-assets', {
+    fetch(`${API}/api/manage-assets`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
       .then(res => res.json())
@@ -56,7 +59,7 @@ export default function AssetManager() {
     if (!confirm(`確定要歸檔此資產嗎？\n這將會從您的錢包扣除 10 點做為 AI 診斷費用。`)) return;
 
     try {
-      const res = await fetch(`http://localhost:8000/archive-asset/${assetId}`, {
+      const res = await fetch(`${API}/archive-asset/${assetId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

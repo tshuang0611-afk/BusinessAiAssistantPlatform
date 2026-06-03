@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon, Search, X } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Asset {
   asset_id: string;
@@ -39,7 +42,7 @@ const PreviewImage = ({ url, title }: { url: string | null | undefined, title: s
   }
 
   const filename = url.split('/').pop();
-  const src = `http://localhost:8000/static/done/${filename}`;
+  const src = `${API}/static/done/${filename}`;
 
   return (
     <img 
@@ -71,8 +74,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     const url = search || filterType
-      ? `http://localhost:8000/api/assets/search?keyword=${encodeURIComponent(search)}&asset_type=${filterType}`
-      : 'http://localhost:8000/api/assets'
+      ? `${API}/api/assets/search?keyword=${encodeURIComponent(search)}&asset_type=${filterType}`
+      : `${API}/api/assets`
     fetch(url)
       .then(res => res.json())
       .then(data => {
@@ -94,7 +97,7 @@ export default function Dashboard() {
     setPurchasingId(asset.asset_id)
     try {
       // 呼叫原本寫好的 purchase-asset API，加上 Token 認證
-      const res = await fetch(`http://localhost:8000/purchase-asset/${asset.asset_id}`, { 
+      const res = await fetch(`${API}/purchase-asset/${asset.asset_id}`, { 
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -118,7 +121,7 @@ export default function Dashboard() {
 
   const handleDownload = async (asset_id: string, filename: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/assets/${asset_id}/download`, {
+      const res = await fetch(`${API}/api/assets/${asset_id}/download`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -169,7 +172,7 @@ export default function Dashboard() {
       return;
     }
     try {
-      const res = await fetch('http://localhost:8000/api/logistics', {
+      const res = await fetch(`${API}/api/logistics`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -349,7 +352,7 @@ export default function Dashboard() {
               controls
               autoPlay
               style={{ width: '100%', borderRadius: '8px', background: '#000', maxHeight: '420px' }}
-              src={`http://localhost:8000/api/assets/${activeAsset.asset_id}/stream?token=${token}`}
+              src={`${API}/api/assets/${activeAsset.asset_id}/stream?token=${token}`}
             >
               您的瀏覽器不支援影片播放。
             </video>

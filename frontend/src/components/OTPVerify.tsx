@@ -1,4 +1,4 @@
-import { useRef, useState, KeyboardEvent } from 'react'
+import { useRef, useState, type KeyboardEvent } from 'react'
 import { ShieldCheck, RefreshCw } from 'lucide-react'
 
 interface OTPVerifyProps {

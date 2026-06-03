@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Users, Coins, Gift, ChevronDown, ChevronUp, Send } from 'lucide-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from 
+
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+'../contexts/AuthContext'
 
 interface Member { user_id: string; username: string; user_role: string; personal_points: number }
 interface LogEntry { distribution_id: string; admin_name: string; user_name: string; amount: number; note: string; created_at: string }
@@ -22,9 +25,9 @@ export default function PointDistribution() {
   const fetchAll = async () => {
     const headers = { Authorization: `Bearer ${token}` }
     const [mRes, wRes, lRes] = await Promise.all([
-      fetch('http://localhost:8000/api/enterprise/members', { headers }),
-      fetch('http://localhost:8000/api/wallets/me', { headers }),
-      fetch('http://localhost:8000/api/enterprise/distribution-log', { headers }),
+      fetch(`${API}/api/enterprise/members`, { headers }),
+      fetch(`${API}/api/wallets/me`, { headers }),
+      fetch(`${API}/api/enterprise/distribution-log`, { headers }),
     ])
     const [mData, wData, lData] = await Promise.all([mRes.json(), wRes.json(), lRes.json()])
     if (mData.status === 'success') setMembers(mData.data)
@@ -38,7 +41,7 @@ export default function PointDistribution() {
     if (!selectedUser || !amount || Number(amount) <= 0) { showToast('⚠️ 請選擇員工並輸入正確金額'); return }
     setLoading(true)
     try {
-      const res = await fetch('http://localhost:8000/api/enterprise/distribute-points', {
+      const res = await fetch(`${API}/api/enterprise/distribute-points`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ to_user_id: selectedUser, amount: Number(amount), note })
