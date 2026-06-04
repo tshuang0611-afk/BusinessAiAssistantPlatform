@@ -1,51 +1,50 @@
-﻿# ============================================================
-# CAXN Platform - Cloud Run 完整部署腳本
-# 執行前請確認已安裝 Google Cloud SDK (gcloud)
-# 下載：https://cloud.google.com/sdk/docs/install
+# ============================================================
+# CAXN Platform - Cloud Run Deployment Script
+# Please ensure Google Cloud SDK (gcloud) is installed before running.
+# Download: https://cloud.google.com/sdk/docs/install
 # ============================================================
 
 ${PROJECT_ID}  = "gen-lang-client-0780315685"
 ${REGION}      = "asia-east1"
-$REPO        = "caxn-repo"                  # Artifact Registry 儲存庫名稱
-${DB_INSTANCE} = "caxn-db-prod"               # Cloud SQL 執行個體名稱
+$REPO        = "caxn-repo"                  # Artifact Registry repository name
+${DB_INSTANCE} = "caxn-db-prod"               # Cloud SQL instance name
 ${DB_NAME}     = "caxn_platform"
 ${DB_USER}     = "caxn_admin"
-${DB_PASS}     = "CaxnDb@2026Secure"          # 生產環境密碼（可自行修改）
+${DB_PASS}     = "CaxnDb@2026Secure"          # Production DB password
 $APP_IMAGE   = "${REGION}-docker.pkg.dev/${PROJECT_ID}/$REPO/caxn-app:latest"
 $WEB_IMAGE   = "${REGION}-docker.pkg.dev/${PROJECT_ID}/$REPO/caxn-frontend:latest"
 
-# 自動偵測並將 gcloud 加進 PATH（解決本機環境變數未設定問題）
+# Auto-detect gcloud path (resolves issues when path is not set globally)
 if (!(Get-Command gcloud -ErrorAction SilentlyContinue)) {
     $gcloudDefaultPath = "$env:USERPROFILE\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin"
     if (Test-Path "$gcloudDefaultPath\gcloud.cmd") {
         $env:PATH += ";$gcloudDefaultPath"
-        Write-Host "已自動將 gcloud 路徑加入 PATH: $gcloudDefaultPath" -ForegroundColor Green
+        Write-Host "Automatically added gcloud path to PATH: $gcloudDefaultPath" -ForegroundColor Green
     } else {
         $gcloudProgramFiles = "C:\Program Files\Google\Cloud SDK\google-cloud-sdk\bin"
         if (Test-Path "$gcloudProgramFiles\gcloud.cmd") {
             $env:PATH += ";$gcloudProgramFiles"
-            Write-Host "已自動將 gcloud 路徑加入 PATH: $gcloudProgramFiles" -ForegroundColor Green
+            Write-Host "Automatically added gcloud path to PATH: $gcloudProgramFiles" -ForegroundColor Green
         } else {
-            Write-Error "找不到 gcloud 指令，請確認已安裝 Google Cloud SDK。"
+            Write-Error "Cannot find gcloud command. Please ensure Google Cloud SDK is installed."
             exit 1
         }
     }
 }
 
-
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  CAXN Platform - Cloud Run 部署流程" -ForegroundColor Cyan
-Write-Host "  專案 ID: ${PROJECT_ID}" -ForegroundColor Cyan
-Write-Host "  區域:    ${REGION}" -ForegroundColor Cyan
+Write-Host "  CAXN Platform - Cloud Run Deployment" -ForegroundColor Cyan
+Write-Host "  Project ID: ${PROJECT_ID}" -ForegroundColor Cyan
+Write-Host "  Region:     ${REGION}" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# ── STEP 1：設定 gcloud 專案 ──────────────────────────────
-Write-Host "`n[Step 1] 設定 GCP 專案..." -ForegroundColor Yellow
+# -- STEP 1: Set gcloud project ------------------------------
+Write-Host "`n[Step 1] Setting GCP Project..." -ForegroundColor Yellow
 gcloud config set project ${PROJECT_ID}
 gcloud config set run/region ${REGION}
 
-# ── STEP 2：啟用必要 API ──────────────────────────────────
-Write-Host "`n[Step 2] 啟用必要的 GCP API（約需 1-2 分鐘）..." -ForegroundColor Yellow
+# -- STEP 2: Enable required APIs ----------------------------
+Write-Host "`n[Step 2] Enabling required GCP APIs (Takes 1-2 mins)..." -ForegroundColor Yellow
 $apis = @(
     "run.googleapis.com",
     "sqladmin.googleapis.com",
@@ -54,28 +53,28 @@ $apis = @(
     "secretmanager.googleapis.com"
 )
 foreach ($api in $apis) {
-    Write-Host "  啟用 $api ..." -NoNewline
+    Write-Host "  Enabling $api ..." -NoNewline
     gcloud services enable $api --quiet
-    Write-Host " ✓" -ForegroundColor Green
+    Write-Host " Done" -ForegroundColor Green
 }
 
-# ── STEP 3：建立 Artifact Registry 儲存庫 ────────────────
-Write-Host "`n[Step 3] 建立 Artifact Registry Docker 儲存庫..." -ForegroundColor Yellow
+# -- STEP 3: Create Artifact Registry repository -------------
+Write-Host "`n[Step 3] Creating Artifact Registry repository..." -ForegroundColor Yellow
 gcloud artifacts repositories create $REPO `
     --repository-format=docker `
     --location=${REGION} `
     --description="CAXN Platform Docker Images" `
     --quiet
-Write-Host "  ✓ 儲存庫 $REPO 建立完成" -ForegroundColor Green
+Write-Host "  Done: Repository $REPO created" -ForegroundColor Green
 
-# ── STEP 4：設定 Docker 認證 ────────────────────────────
-Write-Host "`n[Step 4] 設定 Docker 連接 Artifact Registry..." -ForegroundColor Yellow
+# -- STEP 4: Configure Docker authentication -----------------
+Write-Host "`n[Step 4] Configuring Docker authentication..." -ForegroundColor Yellow
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-Write-Host "  ✓ Docker 認證設定完成" -ForegroundColor Green
+Write-Host "  Done: Docker authentication configured" -ForegroundColor Green
 
-# ── STEP 5：建立 Cloud SQL PostgreSQL 執行個體 ────────────
-Write-Host "`n[Step 5] 建立 Cloud SQL PostgreSQL 15 執行個體..." -ForegroundColor Yellow
-Write-Host "  注意：此步驟約需 5-10 分鐘，請耐心等待..." -ForegroundColor Magenta
+# -- STEP 5: Create Cloud SQL PostgreSQL instance ------------
+Write-Host "`n[Step 5] Creating Cloud SQL PostgreSQL 15 instance..." -ForegroundColor Yellow
+Write-Host "  Note: This step takes 5-10 minutes, please wait..." -ForegroundColor Magenta
 gcloud sql instances create ${DB_INSTANCE} `
     --database-version=POSTGRES_15 `
     --tier=db-f1-micro `
@@ -84,33 +83,33 @@ gcloud sql instances create ${DB_INSTANCE} `
     --storage-type=SSD `
     --no-backup `
     --quiet
-Write-Host "  ✓ Cloud SQL 執行個體建立完成" -ForegroundColor Green
+Write-Host "  Done: Cloud SQL instance created" -ForegroundColor Green
 
-# ── STEP 6：建立資料庫與使用者 ────────────────────────────
-Write-Host "`n[Step 6] 建立資料庫與使用者帳號..." -ForegroundColor Yellow
+# -- STEP 6: Create database and user ------------------------
+Write-Host "`n[Step 6] Creating database and user..." -ForegroundColor Yellow
 gcloud sql databases create ${DB_NAME} --instance=${DB_INSTANCE} --quiet
 gcloud sql users create ${DB_USER} --instance=${DB_INSTANCE} --password=${DB_PASS} --quiet
-Write-Host "  ✓ 資料庫 '${DB_NAME}' 與使用者 '${DB_USER}' 建立完成" -ForegroundColor Green
+Write-Host "  Done: Database '${DB_NAME}' and user '${DB_USER}' created" -ForegroundColor Green
 
-# 取得 Cloud SQL Connection Name
+# Get Cloud SQL Connection Name
 ${SQL_CONN} = "${PROJECT_ID}:${REGION}:${DB_INSTANCE}"
 Write-Host "  Cloud SQL Connection Name: ${SQL_CONN}" -ForegroundColor Cyan
 
-# ── STEP 7：將 GCS 金鑰存入 Secret Manager ───────────────
-Write-Host "`n[Step 7] 將 GCP 金鑰存入 Secret Manager（安全管理）..." -ForegroundColor Yellow
+# -- STEP 7: Save GCP credentials to Secret Manager ----------
+Write-Host "`n[Step 7] Saving GCP credentials to Secret Manager..." -ForegroundColor Yellow
 gcloud secrets create gcp-key-json `
     --data-file="gcp-key.json" `
     --quiet
-Write-Host "  ✓ Secret 'gcp-key-json' 建立完成" -ForegroundColor Green
+Write-Host "  Done: Secret 'gcp-key-json' created" -ForegroundColor Green
 
-# ── STEP 8：Build 並 Push 後端 Docker Image ──────────────
-Write-Host "`n[Step 8] 建置並推送後端 Docker Image..." -ForegroundColor Yellow
+# -- STEP 8: Build and push backend image --------------------
+Write-Host "`n[Step 8] Building and pushing backend Docker image..." -ForegroundColor Yellow
 docker build --no-cache -f app/Dockerfile.cloudrun -t $APP_IMAGE ./app
 docker push $APP_IMAGE
-Write-Host "  ✓ 後端 Image 推送完成：$APP_IMAGE" -ForegroundColor Green
+Write-Host "  Done: Backend image pushed to $APP_IMAGE" -ForegroundColor Green
 
-# ── STEP 9：部署後端到 Cloud Run ────────────────────────
-Write-Host "`n[Step 9] 部署後端 API 到 Cloud Run..." -ForegroundColor Yellow
+# -- STEP 9: Deploy backend to Cloud Run ----------------------
+Write-Host "`n[Step 9] Deploying backend API to Cloud Run..." -ForegroundColor Yellow
 gcloud run deploy caxn-app `
     --image=$APP_IMAGE `
     --region=${REGION} `
@@ -129,23 +128,23 @@ gcloud run deploy caxn-app `
     --set-env-vars="POINT_RATE=1.0,WITHDRAW_MIN_POINTS=5000" `
     --set-secrets="GEMINI_API_KEY=gemini-api-key:latest,GCS_KEY_PATH=gcp-key-json:latest" `
     --quiet
-Write-Host "  ✓ 後端部署完成" -ForegroundColor Green
+Write-Host "  Done: Backend deployed" -ForegroundColor Green
 
-# 取得後端 URL
+# Get Backend URL
 ${BACKEND_URL} = gcloud run services describe caxn-app --region=${REGION} --format="value(status.url)"
-Write-Host "  後端 URL: ${BACKEND_URL}" -ForegroundColor Cyan
+Write-Host "  Backend URL: ${BACKEND_URL}" -ForegroundColor Cyan
 
-# ── STEP 10：Build 並 Push 前端 Docker Image ──────────────
-Write-Host "`n[Step 10] 建置並推送前端 Docker Image..." -ForegroundColor Yellow
+# -- STEP 10: Build and push frontend image ------------------
+Write-Host "`n[Step 10] Building and pushing frontend Docker image..." -ForegroundColor Yellow
 docker build --no-cache `
     -f frontend/Dockerfile.cloudrun `
     --build-arg VITE_API_BASE="${BACKEND_URL}" `
     -t $WEB_IMAGE ./frontend
 docker push $WEB_IMAGE
-Write-Host "  ✓ 前端 Image 推送完成：$WEB_IMAGE" -ForegroundColor Green
+Write-Host "  Done: Frontend image pushed to $WEB_IMAGE" -ForegroundColor Green
 
-# ── STEP 11：部署前端到 Cloud Run ────────────────────────
-Write-Host "`n[Step 11] 部署前端到 Cloud Run..." -ForegroundColor Yellow
+# -- STEP 11: Deploy frontend to Cloud Run -------------------
+Write-Host "`n[Step 11] Deploying frontend to Cloud Run..." -ForegroundColor Yellow
 gcloud run deploy caxn-frontend `
     --image=$WEB_IMAGE `
     --region=${REGION} `
@@ -157,30 +156,29 @@ gcloud run deploy caxn-frontend `
     --max-instances=2 `
     --set-env-vars="VITE_API_BASE=${BACKEND_URL}" `
     --quiet
-Write-Host "  ✓ 前端部署完成" -ForegroundColor Green
+Write-Host "  Done: Frontend deployed" -ForegroundColor Green
 
-# 取得前端 URL
+# Get Frontend URL
 ${FRONTEND_URL} = gcloud run services describe caxn-frontend --region=${REGION} --format="value(status.url)"
 
-# ── STEP 12：更新後端的 ECPay Callback URL ───────────────
-Write-Host "`n[Step 12] 更新後端的 ECPay Callback 與前端跳轉網址..." -ForegroundColor Yellow
+# -- STEP 12: Update ECPay settings on backend ---------------
+Write-Host "`n[Step 12] Updating ECPay return and client back URL..." -ForegroundColor Yellow
 gcloud run services update caxn-app `
     --region=${REGION} `
     --update-env-vars="ECPAY_RETURN_URL=${BACKEND_URL}/api/payment/ecpay/callback,ECPAY_CLIENT_BACK=${FRONTEND_URL}" `
     --quiet
-Write-Host "  ✓ ECPay 網址更新完成" -ForegroundColor Green
+Write-Host "  Done: ECPay URLs updated" -ForegroundColor Green
 
-
-# ── 完成摘要 ──────────────────────────────────────────────
+# -- Summary -------------------------------------------------
 Write-Host "`n==========================================" -ForegroundColor Green
-Write-Host "  🎉 CAXN Platform 部署完成！" -ForegroundColor Green
+Write-Host "  Deployment Completed Successfully!" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "  前端網址:  ${FRONTEND_URL}" -ForegroundColor Cyan
-Write-Host "  後端 API:  ${BACKEND_URL}" -ForegroundColor Cyan
-Write-Host "  API 文件:  ${BACKEND_URL}/docs" -ForegroundColor Cyan
-Write-Host "  Cloud SQL: ${SQL_CONN}" -ForegroundColor Cyan
+Write-Host "  Frontend URL: ${FRONTEND_URL}" -ForegroundColor Cyan
+Write-Host "  Backend URL:  ${BACKEND_URL}" -ForegroundColor Cyan
+Write-Host "  API Docs:     ${BACKEND_URL}/docs" -ForegroundColor Cyan
+Write-Host "  Cloud SQL:    ${SQL_CONN}" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "`n  ⚠️  部署後記得：" -ForegroundColor Yellow
-Write-Host "  1. 更新 ECPay ReturnURL 為：${BACKEND_URL}/api/payment/ecpay/callback" -ForegroundColor Yellow
-Write-Host "  2. 更新 ECPay ClientBackURL 為：${FRONTEND_URL}" -ForegroundColor Yellow
-Write-Host "  3. 在 GCP Console 驗證 Cloud SQL 資料庫連線正常" -ForegroundColor Yellow
+Write-Host "`n  Deployment Checklist:" -ForegroundColor Yellow
+Write-Host "  1. Update ECPay ReturnURL to: ${BACKEND_URL}/api/payment/ecpay/callback" -ForegroundColor Yellow
+Write-Host "  2. Update ECPay ClientBackURL to: ${FRONTEND_URL}" -ForegroundColor Yellow
+Write-Host "  3. Verify Cloud SQL connection in GCP Console" -ForegroundColor Yellow
