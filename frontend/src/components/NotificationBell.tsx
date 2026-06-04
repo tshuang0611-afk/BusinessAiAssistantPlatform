@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bell, CheckCheck, X } from 'lucide-react'
-import { useAuth } from 
+import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'../contexts/AuthContext'
 
 interface Notification {
   notification_id: string

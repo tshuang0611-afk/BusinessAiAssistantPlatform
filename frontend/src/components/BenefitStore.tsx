@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Gift, Tag, ShoppingCart, Coins, Copy, Check, Search, X, Truck, Package } from 'lucide-react'
-import { useAuth } from 
+import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'../contexts/AuthContext'
 
 interface Benefit {
   benefit_id: string

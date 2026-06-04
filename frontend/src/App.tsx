@@ -19,10 +19,9 @@ import PartnerManager from './components/PartnerManager'
 import NotificationBell from './components/NotificationBell'
 import UserCenter from './components/UserCenter'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { useMediaQuery } from 
+import { useMediaQuery } from  './hooks/useMediaQuery'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'./hooks/useMediaQuery'
 import {
   LayoutDashboard, Wallet as WalletIcon, UploadCloud, Cloud, LogOut,
   PackageSearch, FileText, ShieldCheck, Sparkles, Users, Gift,

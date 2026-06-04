@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Users, Coins, Gift, ChevronDown, ChevronUp, Send } from 'lucide-react'
-import { useAuth } from 
+import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'../contexts/AuthContext'
 
 interface Member { user_id: string; username: string; user_role: string; personal_points: number }
 interface LogEntry { distribution_id: string; admin_name: string; user_name: string; amount: number; note: string; created_at: string }

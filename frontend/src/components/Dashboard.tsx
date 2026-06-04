@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon, Search, X } from 'lucide-react'
-import { useAuth } from 
+import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'../contexts/AuthContext'
 
 interface Asset {
   asset_id: string;

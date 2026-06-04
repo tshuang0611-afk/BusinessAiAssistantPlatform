@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Plus, Link, ToggleLeft, ToggleRight, Copy, AlertCircle } from 'lucide-react'
-import { useAuth } from 
+import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'../contexts/AuthContext'
 
 interface Partner {
   platform_id: string

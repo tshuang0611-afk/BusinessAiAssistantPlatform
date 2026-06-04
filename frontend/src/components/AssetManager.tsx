@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useAuth } from 
+import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'../contexts/AuthContext'
 
 interface ManageAsset {
   asset_id: string;

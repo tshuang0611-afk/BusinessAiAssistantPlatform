@@ -1,9 +1,8 @@
 import { useState, useRef } from 'react'
 import { ArrowLeft, Gift, UploadCloud, CheckCircle } from 'lucide-react'
-import { useAuth } from 
+import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'../contexts/AuthContext'
 
 interface UploadBenefitProps { onBack: () => void; onSuccess: () => void }
 

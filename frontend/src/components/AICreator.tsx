@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Sparkles, Video, Image as ImageIcon, Send, Copy, Check, RefreshCw } from 
+import { Sparkles, Video, Image as ImageIcon, Send, Copy, Check, RefreshCw } from  'lucide-react'
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-'lucide-react';
+const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';;
 
 interface Asset {
   asset_id: string;
