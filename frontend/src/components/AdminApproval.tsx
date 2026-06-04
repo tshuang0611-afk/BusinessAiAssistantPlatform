@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { ShieldCheck, ShieldX, RefreshCw, Clock, User, Building2, Users } from 'lucide-react';
+import { ShieldCheck, ShieldX, RefreshCw, Clock, User, Building2 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
