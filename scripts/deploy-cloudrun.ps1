@@ -1,4 +1,4 @@
-﻿# ============================================================
+# ============================================================
 # CAXN Platform - Cloud Run 完整部署腳本
 # 執行前請確認已安裝 Google Cloud SDK (gcloud)
 # 下載：https://cloud.google.com/sdk/docs/install
@@ -105,7 +105,7 @@ Write-Host "  ✓ Secret 'gcp-key-json' 建立完成" -ForegroundColor Green
 
 # ── STEP 8：Build 並 Push 後端 Docker Image ──────────────
 Write-Host "`n[Step 8] 建置並推送後端 Docker Image..." -ForegroundColor Yellow
-docker build -f app/Dockerfile.cloudrun -t $APP_IMAGE ./app
+docker build --no-cache -f app/Dockerfile.cloudrun -t $APP_IMAGE ./app
 docker push $APP_IMAGE
 Write-Host "  ✓ 後端 Image 推送完成：$APP_IMAGE" -ForegroundColor Green
 
@@ -137,7 +137,7 @@ Write-Host "  後端 URL: ${BACKEND_URL}" -ForegroundColor Cyan
 
 # ── STEP 10：Build 並 Push 前端 Docker Image ──────────────
 Write-Host "`n[Step 10] 建置並推送前端 Docker Image..." -ForegroundColor Yellow
-docker build `
+docker build --no-cache `
     -f frontend/Dockerfile.cloudrun `
     --build-arg VITE_API_BASE="${BACKEND_URL}" `
     -t $WEB_IMAGE ./frontend
