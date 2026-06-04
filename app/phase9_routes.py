@@ -198,7 +198,7 @@ async def get_my_licenses(current_user=Depends(get_current_user)):
                    al.ai_score, al.ai_analysis
             FROM wallet_transactions wt
             JOIN assets a ON wt.related_asset_id::uuid = a.asset_id
-            LEFT JOIN assets_log al ON a.asset_id = al.asset_id
+            LEFT JOIN assets_log al ON a.asset_id = al.asset_id::uuid
             WHERE wt.transaction_type = 'ASSET_EXCHANGE'
             AND wt.from_wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid)
             ORDER BY wt.created_at DESC""", (user_id,))
@@ -230,7 +230,7 @@ async def get_hot_assets():
                    COALESCE(r.rating_avg, 0) as avg_rating,
                    COALESCE(b.buy_count, 0) as buy_count
             FROM assets a
-            LEFT JOIN assets_log al ON a.asset_id = al.asset_id
+            LEFT JOIN assets_log al ON a.asset_id = al.asset_id::uuid
             LEFT JOIN (SELECT asset_id, ROUND(AVG(score)::numeric, 1) as rating_avg FROM asset_ratings GROUP BY asset_id) r ON a.asset_id = r.asset_id
             LEFT JOIN (SELECT related_asset_id::uuid as asset_id, COUNT(*) as buy_count FROM wallet_transactions WHERE transaction_type = 'ASSET_EXCHANGE' AND related_asset_id IS NOT NULL GROUP BY related_asset_id) b ON a.asset_id = b.asset_id
             WHERE al.is_archived = true
@@ -244,7 +244,7 @@ async def get_new_assets():
     try:
         cur.execute("""SELECT a.asset_id, a.title, a.asset_type, a.required_points, a.created_at,
                    al.ai_score, al.ai_analysis
-            FROM assets a LEFT JOIN assets_log al ON a.asset_id = al.asset_id
+            FROM assets a LEFT JOIN assets_log al ON a.asset_id = al.asset_id::uuid
             WHERE al.is_archived = true AND a.created_at >= NOW() - INTERVAL '7 days'
             ORDER BY a.created_at DESC LIMIT 8""")
         return {"status": "success", "data": cur.fetchall()}
@@ -277,7 +277,7 @@ async def search_assets_advanced(
                    al.ai_score, al.ai_analysis,
                    COALESCE(r.rating_avg, 0) as avg_rating, COALESCE(b.buy_count, 0) as buy_count
             FROM assets a
-            LEFT JOIN assets_log al ON a.asset_id = al.asset_id
+            LEFT JOIN assets_log al ON a.asset_id = al.asset_id::uuid
             LEFT JOIN (SELECT asset_id, ROUND(AVG(score)::numeric,1) as rating_avg FROM asset_ratings GROUP BY asset_id) r ON a.asset_id = r.asset_id
             LEFT JOIN (SELECT related_asset_id::uuid as asset_id, COUNT(*) as buy_count FROM wallet_transactions WHERE transaction_type='ASSET_EXCHANGE' AND related_asset_id IS NOT NULL GROUP BY related_asset_id) b ON a.asset_id = b.asset_id
             WHERE {' AND '.join(where)} ORDER BY {order_clause} LIMIT 50""", params)

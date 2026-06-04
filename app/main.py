@@ -816,7 +816,7 @@ async def get_assets():
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute("""SELECT l.asset_id, l.ai_score, l.ai_tags, l.ai_analysis, l.is_archived, l.asset_type, a.title, a.content_url, a.required_points 
-                       FROM assets_log l JOIN assets a ON l.asset_id = a.asset_id WHERE l.is_archived = true ORDER BY l.created_at DESC""")
+                       FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id WHERE l.is_archived = true ORDER BY l.created_at DESC""")
         return {"status": "success", "data": cur.fetchall()}
     finally: cur.close(); conn.close()
 
@@ -827,7 +827,7 @@ async def manage_assets(current_user = Depends(require_enterprise_admin)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at 
-                       FROM assets_log l JOIN assets a ON l.asset_id = a.asset_id WHERE a.owner_enterprise_id = %s::uuid ORDER BY l.created_at DESC""", (ent_id,))
+                       FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id WHERE a.owner_enterprise_id = %s::uuid ORDER BY l.created_at DESC""", (ent_id,))
         return {"status": "success", "data": cur.fetchall()}
     finally: cur.close(); conn.close()
 
@@ -1291,7 +1291,7 @@ async def search_assets(keyword: str = "", asset_type: str = ""):
     try:
         sql = """SELECT l.asset_id, l.ai_score, l.ai_tags, l.ai_analysis, l.is_archived, l.asset_type,
                         a.title, a.content_url, a.required_points, a.publish_category
-                 FROM assets_log l JOIN assets a ON l.asset_id = a.asset_id
+                 FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id
                  WHERE l.is_archived = true"""
         params = []
         if asset_type: sql += " AND l.asset_type = %s"; params.append(asset_type)
@@ -1648,7 +1648,7 @@ async def get_favorites(current_user = Depends(get_current_user)):
     try:
         cur.execute("""SELECT a.asset_id, a.title, a.asset_type, a.required_points, l.ai_score, l.ai_analysis
             FROM asset_favorites f JOIN assets a ON f.asset_id = a.asset_id
-            LEFT JOIN assets_log l ON a.asset_id = l.asset_id
+            LEFT JOIN assets_log l ON a.asset_id = l.asset_id::uuid
             WHERE f.user_id = %s::uuid ORDER BY f.created_at DESC""", (user_id,))
         return {"status": "success", "data": cur.fetchall()}
     finally: cur.close(); conn.close()
