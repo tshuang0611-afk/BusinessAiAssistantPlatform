@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # CAXN Platform - Cloud Run 完整部署腳本
 # 執行前請確認已安裝 Google Cloud SDK (gcloud)
 # 下載：https://cloud.google.com/sdk/docs/install
