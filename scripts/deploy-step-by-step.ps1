@@ -49,8 +49,15 @@ gcloud sql databases create $DB_NAME --instance=$DB_INSTANCE
 gcloud sql users create $DB_USER --instance=$DB_INSTANCE --password=$DB_PASS
 
 # === BLOCK 5：建立 Secrets ===
-# Gemini API Key
-$GEMINI_KEY = "AIzaSyBrs9anwMq7EsPdkC7YKIDkbQAIMoKecok"
+# Gemini API Key (從環境變數或提示輸入取得，避免寫死在腳本中流出)
+$GEMINI_KEY = $env:GEMINI_API_KEY
+if (-not $GEMINI_KEY) {
+    $GEMINI_KEY = Read-Host "Please enter your Gemini API Key"
+}
+if (-not $GEMINI_KEY) {
+    Write-Error "Gemini API Key cannot be empty!"
+    exit 1
+}
 $GEMINI_KEY | gcloud secrets create gemini-api-key --data-file=-
 
 # GCS 金鑰
