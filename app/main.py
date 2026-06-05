@@ -1093,6 +1093,7 @@ from storage_helper import save_file as storage_save, get_file_url, delete_file 
 @app.post("/api/upload/material")
 async def upload_material(
     file: UploadFile = File(...),
+    custom_prompt: str = Form(default=""),
     current_user = Depends(require_enterprise_admin)
 ):
     """真實 multipart 素材上傳，儲存到 GCS/本地後送 Gemini AI 審核"""
@@ -1112,7 +1113,11 @@ async def upload_material(
         try:
             import io
             img = PIL.Image.open(io.BytesIO(file_bytes))
-            prompt = "請分析這張圖片作為企業共享資源素材的適合度。請以 JSON 格式回應，包含 is_passed, score, reason, category, summary, seo_tags"
+            base_prompt = "請分析這張圖片作為企業共享資源素材的適合度。請以 JSON 格式回應，包含 is_passed, score, reason, category, summary, seo_tags"
+            if custom_prompt and custom_prompt.strip():
+                prompt = f"{base_prompt}\n\n上傳者的補充審核重點：{custom_prompt.strip()}"
+            else:
+                prompt = base_prompt
             response = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=[img, prompt],

@@ -11,6 +11,7 @@ export default function UploadMaterial({ onBack, onSuccess }: UploadMaterialProp
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [customPrompt, setCustomPrompt] = useState('')
   const [result, setResult] = useState<{ is_passed: boolean; ai_score: number; reason: string } | null>(null)
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -30,6 +31,7 @@ export default function UploadMaterial({ onBack, onSuccess }: UploadMaterialProp
     setLoading(true); setError('')
     const fd = new FormData()
     fd.append('file', file)
+    if (customPrompt.trim()) fd.append('custom_prompt', customPrompt.trim())
     try {
       const res = await fetch(`${API}/api/upload/material`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd
@@ -80,6 +82,37 @@ export default function UploadMaterial({ onBack, onSuccess }: UploadMaterialProp
           </div>
           <input type="file" accept="image/*" ref={fileInputRef} style={{ display: 'none' }} onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
           {file && <p style={{ margin: '1rem 0 0', color: 'var(--text-secondary)', fontSize: '0.875rem', textAlign: 'center' }}>已選擇：{file.name}</p>}
+
+          {/* 自訂 AI 審核提示 */}
+          <div style={{ marginTop: '1.5rem' }}>
+            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+              🎯 補充 AI 審核重點 <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-secondary)' }}>（選填）</span>
+            </label>
+            <textarea
+              value={customPrompt}
+              onChange={e => setCustomPrompt(e.target.value)}
+              placeholder="例如：這是一張企業品牌 Logo，請重點審核品牌識別度、色彩搭配及視覺清晰度。"
+              rows={3}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                resize: 'vertical',
+                minHeight: '80px',
+                padding: '0.75rem',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid var(--glass-border)',
+                borderRadius: '10px',
+                color: 'var(--text-primary)',
+                fontSize: '0.875rem',
+                lineHeight: '1.5',
+                outline: 'none',
+              }}
+            />
+            <p style={{ margin: '0.35rem 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              填寫後 AI 將依據您的說明，針對特定重點進行評分，讓審核結果更精準。
+            </p>
+          </div>
+
           {error && <div style={{ margin: '1rem 0 0', color: '#ef4444', background: 'rgba(239,68,68,0.1)', borderRadius: '8px', padding: '0.75rem', fontSize: '0.875rem', textAlign: 'center' }}>{error}</div>}
           <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', justifyContent: 'center' }}>
             {file && <button onClick={() => { setFile(null); setPreview(null) }}>重新選擇</button>}
