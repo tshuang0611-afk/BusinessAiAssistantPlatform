@@ -71,8 +71,8 @@ function MainApp() {
   // 根據角色建立頁籤列表
   const navItems = [
     { id: 'dashboard', label: '資產大廳', icon: <LayoutDashboard size={16} />, roles: ['all'] },
-    { id: 'upload', label: '上傳資產', icon: <UploadCloud size={16} />, roles: ['ENTERPRISE_ADMIN', 'PLATFORM_ADMIN'] },
-    { id: 'manage', label: '資產管理', icon: <PackageSearch size={16} />, roles: ['ENTERPRISE_ADMIN'] },
+    { id: 'upload', label: '上傳資產', icon: <UploadCloud size={16} />, roles: ['ENTERPRISE_ADMIN'] },
+    { id: 'manage', label: '資產管理', icon: <PackageSearch size={16} />, roles: ['ENTERPRISE_ADMIN', 'PLATFORM_ADMIN'] },
     { id: 'ai_creator', label: 'AI 創作坊', icon: <Sparkles size={16} />, roles: ['ENTERPRISE_ADMIN'] },
     { id: 'members', label: '成員管理', icon: <Users size={16} />, roles: ['ENTERPRISE_ADMIN'] },
     { id: 'benefits', label: '福利品大廳', icon: <Gift size={16} />, roles: ['all'] },

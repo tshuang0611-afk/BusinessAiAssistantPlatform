@@ -12,10 +12,11 @@ interface ManageAsset {
   required_points: number | null;
   ai_score: number | null;
   created_at: string;
+  owner_name?: string | null;
 }
 
 export default function AssetManager() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [assets, setAssets] = useState<ManageAsset[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -91,8 +92,14 @@ export default function AssetManager() {
 
   return (
     <div style={{ padding: '1rem' }}>
-      <h2 style={{ marginBottom: '0.5rem' }}>企業資產管理</h2>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>設定您的數位資產分類與定價，並完成歸檔 (將扣除 10 點 AI 處理費) 後，資產即可上架至大廳。</p>
+      <h2 style={{ marginBottom: '0.5rem' }}>
+        {user?.role === 'PLATFORM_ADMIN' ? '全平台數位資產查詢清單' : '企業資產管理'}
+      </h2>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>
+        {user?.role === 'PLATFORM_ADMIN' 
+          ? '檢視與查詢全體企業或個人上傳的數位資產。' 
+          : '設定您的數位資產分類與定價，並完成歸檔 (將扣除 10 點 AI 處理費) 後，資產即可上架至大廳。'}
+      </p>
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem' }}>載入中...</div>
@@ -102,6 +109,7 @@ export default function AssetManager() {
             <thead>
               <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
                 <th style={{ padding: '1rem' }}>ID</th>
+                {user?.role === 'PLATFORM_ADMIN' && <th style={{ padding: '1rem' }}>上傳來源</th>}
                 <th style={{ padding: '1rem' }}>AI 評分</th>
                 <th style={{ padding: '1rem' }}>建立時間</th>
                 <th style={{ padding: '1rem' }}>狀態與操作</th>
@@ -111,6 +119,9 @@ export default function AssetManager() {
               {assets.map(asset => (
                 <tr key={asset.asset_id} style={{ borderBottom: '1px solid var(--glass-border)' }}>
                   <td style={{ padding: '1rem', fontFamily: 'monospace' }}>{asset.asset_id.substring(0,8)}</td>
+                  {user?.role === 'PLATFORM_ADMIN' && (
+                    <td style={{ padding: '1rem', fontWeight: '500' }}>{asset.owner_name || '個人上傳'}</td>
+                  )}
                   <td style={{ padding: '1rem' }}>
                     {asset.ai_score !== null ? (
                       <span style={{ 
@@ -131,6 +142,10 @@ export default function AssetManager() {
                         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                           名稱: {asset.title} | 售價: {asset.required_points} 點 | 分類: {asset.asset_type}
                         </div>
+                      </div>
+                    ) : user?.role === 'PLATFORM_ADMIN' ? (
+                      <div>
+                        <span style={{ color: 'var(--warning)', fontWeight: 'bold' }}>⏳ 未歸檔/待歸檔</span>
                       </div>
                     ) : (
                       editForms[asset.asset_id] && (
@@ -172,7 +187,7 @@ export default function AssetManager() {
               ))}
               {assets.length === 0 && (
                 <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', padding: '2rem' }}>尚無任何資產資料</td>
+                  <td colSpan={user?.role === 'PLATFORM_ADMIN' ? 5 : 4} style={{ textAlign: 'center', padding: '2rem' }}>尚無任何資產資料</td>
                 </tr>
               )}
             </tbody>

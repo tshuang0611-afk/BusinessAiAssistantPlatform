@@ -606,6 +606,8 @@ async def get_all_enterprises(current_user = Depends(require_platform_admin)):
 @app.post("/api/ai/generate-creative")
 async def generate_creative(req: GenerateCreativeRequest, current_user = Depends(require_enterprise_admin)):
     """AI 創作坊：使用 Gemini 生成影片腳本或電子賀卡文案，扣除 20 點 AI 運算費"""
+    if current_user.get("role") == "PLATFORM_ADMIN":
+        raise HTTPException(status_code=403, detail="平台管理者不應介入此功能運作")
     AI_CREATIVE_FEE = 20.0
     ent_id = current_user.get("enterprise_id")
     if not ent_id:
@@ -694,6 +696,8 @@ async def get_me(current_user = Depends(get_current_user)):
 
 @app.post("/process-asset")
 async def process_asset(req: AssetLogRequest = Body(...), current_user = Depends(require_enterprise_admin)):
+    if current_user.get("role") == "PLATFORM_ADMIN":
+        raise HTTPException(status_code=403, detail="平台管理者不應介入此功能運作")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
@@ -757,6 +761,8 @@ async def process_asset(req: AssetLogRequest = Body(...), current_user = Depends
 
 @app.post("/archive-asset/{log_id}")
 async def archive_asset(log_id: str, req: ArchiveRequest, current_user = Depends(require_enterprise_admin)):
+    if current_user.get("role") == "PLATFORM_ADMIN":
+        raise HTTPException(status_code=403, detail="平台管理者不應介入此功能運作")
     ent_id = current_user.get("enterprise_id")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -827,12 +833,23 @@ async def get_assets():
 
 @app.get("/api/manage-assets")
 async def manage_assets(current_user = Depends(require_enterprise_admin)):
+    role = current_user.get("role")
     ent_id = current_user.get("enterprise_id")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at 
-                       FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id WHERE a.owner_enterprise_id = %s::uuid ORDER BY l.created_at DESC""", (ent_id,))
+        if role == "PLATFORM_ADMIN":
+            cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at,
+                                  e.company_name as owner_name 
+                           FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id 
+                           LEFT JOIN enterprises e ON a.owner_enterprise_id = e.enterprise_id 
+                           ORDER BY l.created_at DESC""")
+        else:
+            cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at,
+                                  e.company_name as owner_name 
+                           FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id 
+                           LEFT JOIN enterprises e ON a.owner_enterprise_id = e.enterprise_id 
+                           WHERE a.owner_enterprise_id = %s::uuid ORDER BY l.created_at DESC""", (ent_id,))
         return {"status": "success", "data": cur.fetchall()}
     finally: cur.close(); conn.close()
 
@@ -1047,6 +1064,8 @@ async def upload_material(
     current_user = Depends(require_enterprise_admin)
 ):
     """真實 multipart 素材上傳，儲存到 GCS/本地後送 Gemini AI 審核"""
+    if current_user.get("role") == "PLATFORM_ADMIN":
+        raise HTTPException(status_code=403, detail="平台管理者不應介入此功能運作")
     ent_id = current_user.get("enterprise_id") or TEST_ENTERPRISE_ID
     new_asset_id = str(uuid.uuid4())
     file_bytes = await file.read()
@@ -1115,6 +1134,8 @@ async def upload_creative(
     current_user = Depends(require_enterprise_admin)
 ):
     """AI 創意成品直接上架：企業上傳由外部 AI 生成的影片/圖片，扣 AI 診斷費後發布供消費者點數解鎖"""
+    if current_user.get("role") == "PLATFORM_ADMIN":
+        raise HTTPException(status_code=403, detail="平台管理者不應介入此功能運作")
     ent_id = current_user.get("enterprise_id") or TEST_ENTERPRISE_ID
     new_asset_id = str(uuid.uuid4())
     file_bytes = await file.read()
