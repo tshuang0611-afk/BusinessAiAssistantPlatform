@@ -718,6 +718,11 @@ async def process_asset(req: AssetLogRequest = Body(...), current_user = Depends
             ai_score = res.get('score', 0)
             reason = res.get('reason', '')
             category = res.get('category', 'IMAGE')
+            if not isinstance(category, str):
+                category = "IMAGE"
+            category = category.upper().strip()
+            if category not in ['IMAGE', 'VIDEO_AD', 'ECARD', 'COURSE', 'GOODS']:
+                category = "IMAGE"
             summary = res.get('summary', '')
             seo_tags = res.get('seo_tags', [])
             ai_metadata = res
@@ -1067,6 +1072,11 @@ async def upload_material(
             ai_score  = res.get('score', 0)
             reason    = res.get('reason', '')
             category  = res.get('category', 'IMAGE')
+            if not isinstance(category, str):
+                category = "IMAGE"
+            category = category.upper().strip()
+            if category not in ['IMAGE', 'VIDEO_AD', 'ECARD', 'COURSE', 'GOODS']:
+                category = "IMAGE"
             summary   = res.get('summary', '')
             seo_tags  = res.get('seo_tags', [])
             ai_metadata = res
