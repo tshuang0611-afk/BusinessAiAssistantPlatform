@@ -794,37 +794,59 @@ async def archive_asset(log_id: str, req: ArchiveRequest, current_user = Depends
 
 @app.post("/purchase-asset/{asset_id}")
 async def purchase_asset(asset_id: str, current_user = Depends(get_current_user)):
+    role = current_user.get("role")
+    user_id = current_user.get("user_id")
     buyer_owner_id = current_user.get("enterprise_id")
-    if not buyer_owner_id: raise HTTPException(status_code=403, detail="Platform cannot buy")
+    if not buyer_owner_id:
+        raise HTTPException(status_code=403, detail="Platform cannot buy")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute("SELECT required_points, owner_enterprise_id FROM assets WHERE asset_id = %s::uuid", (asset_id,))
         asset = cur.fetchone()
-        if not asset: raise HTTPException(status_code=404, detail="Not found")
-        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Not found")
+
         full_price = float(asset['required_points'])
         seller_id = asset['owner_enterprise_id']
         platform_fee = full_price * 0.2
         seller_revenue = full_price * 0.8
-        
-        cur.execute("SELECT wallet_id, balance FROM wallets WHERE owner_id = %s::uuid", (buyer_owner_id,))
-        buyer_wallet = cur.fetchone()
-        if not buyer_wallet or float(buyer_wallet['balance']) < full_price:
-            raise HTTPException(status_code=400, detail="餘額不足")
-            
-        cur.execute("UPDATE wallets SET balance = balance - %s WHERE owner_id = %s::uuid", (full_price, buyer_owner_id))
-        cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (platform_fee, PLATFORM_WALLET_OWNER_ID))
-        cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (seller_revenue, seller_id))
-        
-        cur.execute("""INSERT INTO wallet_transactions (from_wallet_id, to_wallet_id, amount, fee_amount, transaction_type, related_asset_id) 
-                       VALUES (%s, (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid), %s, %s, 'ASSET_EXCHANGE', %s::uuid)""",
-                    (buyer_wallet['wallet_id'], PLATFORM_WALLET_OWNER_ID, full_price, platform_fee, asset_id))
+
+        if role == "ENTERPRISE_USER":
+            # 一般員工：從個人點數扣除
+            cur.execute("SELECT personal_points FROM users WHERE user_id = %s::uuid", (user_id,))
+            user_row = cur.fetchone()
+            if not user_row or float(user_row['personal_points']) < full_price:
+                raise HTTPException(status_code=400, detail=f"個人點數餘額不足，目前僅有 {float(user_row['personal_points']) if user_row else 0} 點")
+            cur.execute("UPDATE users SET personal_points = personal_points - %s WHERE user_id = %s::uuid", (full_price, user_id))
+            # 賣方與平台仍從企業錢包收款（平台費用分潤）
+            cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (platform_fee, PLATFORM_WALLET_OWNER_ID))
+            if seller_id:
+                cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (seller_revenue, seller_id))
+        else:
+            # 企業管理者：從企業錢包扣除
+            cur.execute("SELECT wallet_id, balance FROM wallets WHERE owner_id = %s::uuid", (buyer_owner_id,))
+            buyer_wallet = cur.fetchone()
+            if not buyer_wallet or float(buyer_wallet['balance']) < full_price:
+                raise HTTPException(status_code=400, detail="企業錢包餘額不足")
+            cur.execute("UPDATE wallets SET balance = balance - %s WHERE owner_id = %s::uuid", (full_price, buyer_owner_id))
+            cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (platform_fee, PLATFORM_WALLET_OWNER_ID))
+            if seller_id:
+                cur.execute("UPDATE wallets SET balance = balance + %s WHERE owner_id = %s::uuid", (seller_revenue, seller_id))
+            cur.execute("""INSERT INTO wallet_transactions (from_wallet_id, to_wallet_id, amount, fee_amount, transaction_type, related_asset_id) 
+                           VALUES (%s, (SELECT wallet_id FROM wallets WHERE owner_id = %s::uuid), %s, %s, 'ASSET_EXCHANGE', %s::uuid)""",
+                        (buyer_wallet['wallet_id'], PLATFORM_WALLET_OWNER_ID, full_price, platform_fee, asset_id))
+
         conn.commit()
-        return {"status": "success", "message": "分潤採購成功"}
-    except HTTPException: raise
-    except Exception as e: conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
-    finally: cur.close(); conn.close()
+        return {"status": "success", "message": "採購成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close(); conn.close()
+
 
 @app.get("/api/assets")
 async def get_assets():
@@ -907,15 +929,29 @@ async def get_transactions(current_user = Depends(require_platform_admin)):
 
 @app.get("/api/wallets/me")
 async def get_wallet(current_user = Depends(get_current_user)):
-    owner_id = current_user.get("enterprise_id")
-    if not owner_id: return {"status": "success", "balance": 0}
+    role = current_user.get("role")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("SELECT balance FROM wallets WHERE owner_id = %s::uuid", (owner_id,))
-        row = cur.fetchone()
-        return {"status": "success", "balance": row['balance'] if row else 0}
-    finally: cur.close(); conn.close()
+        if role == "ENTERPRISE_USER":
+            # 一般使用者：查個人點數（由企業管理者分配，存在 users.personal_points）
+            user_id = current_user.get("user_id")
+            if not user_id:
+                return {"status": "success", "balance": 0}
+            cur.execute("SELECT personal_points FROM users WHERE user_id = %s::uuid", (user_id,))
+            row = cur.fetchone()
+            return {"status": "success", "balance": float(row['personal_points']) if row else 0}
+        else:
+            # 企業管理者 / 平台管理者：查企業錢包
+            owner_id = current_user.get("enterprise_id")
+            if not owner_id:
+                return {"status": "success", "balance": 0}
+            cur.execute("SELECT balance FROM wallets WHERE owner_id = %s::uuid", (owner_id,))
+            row = cur.fetchone()
+            return {"status": "success", "balance": float(row['balance']) if row else 0}
+    finally:
+        cur.close(); conn.close()
+
 
 @app.post("/wallets/topup")
 async def topup_wallet(req: TopUpRequest, current_user = Depends(get_current_user)):
