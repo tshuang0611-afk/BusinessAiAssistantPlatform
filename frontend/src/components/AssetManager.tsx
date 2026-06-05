@@ -13,6 +13,10 @@ interface ManageAsset {
   ai_score: number | null;
   created_at: string;
   owner_name?: string | null;
+  no_ai_review?: boolean;
+  is_published?: boolean;
+  reason?: string | null;
+  ai_analysis?: string | null;
 }
 
 export default function AssetManager() {
@@ -20,7 +24,29 @@ export default function AssetManager() {
   const [assets, setAssets] = useState<ManageAsset[]>([])
   const [loading, setLoading] = useState(true)
 
+  const [selectedAsset, setSelectedAsset] = useState<ManageAsset | null>(null)
+  const [overrideAi, setOverrideAi] = useState<Record<string, boolean>>({})
+
   const [editForms, setEditForms] = useState<Record<string, { title: string, points: string, type: string }>>({})
+
+  const handleTogglePublish = async (assetId: string) => {
+    try {
+      const res = await fetch(`${API}/api/assets/${assetId}/toggle-publish`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      const data = await res.json()
+      if (res.ok) {
+        fetchAssets()
+      } else {
+        alert("操作失敗：" + (data.detail || "未知錯誤"))
+      }
+    } catch (e) {
+      alert("網路錯誤")
+    }
+  }
 
   const fetchAssets = () => {
     setLoading(true)
@@ -68,7 +94,8 @@ export default function AssetManager() {
         body: JSON.stringify({
           asset_type: form.type,
           title: form.title,
-          required_points: Number(form.points)
+          required_points: Number(form.points),
+          no_ai_review: !!overrideAi[assetId]
         })
       })
       const data = await res.json()
@@ -123,14 +150,30 @@ export default function AssetManager() {
                     <td style={{ padding: '1rem', fontWeight: '500' }}>{asset.owner_name || '個人上傳'}</td>
                   )}
                   <td style={{ padding: '1rem' }}>
-                    {asset.ai_score !== null ? (
-                      <span style={{ 
-                        color: asset.ai_score >= 80 ? 'var(--success)' : asset.ai_score >= 50 ? 'var(--warning)' : 'var(--danger)',
-                        fontWeight: 'bold' 
-                      }}>
-                        {asset.ai_score}
-                      </span>
-                    ) : 'N/A'}
+                    <div>
+                      {asset.no_ai_review ? (
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 'bold' }}>無AI審閱</span>
+                      ) : asset.ai_score !== null ? (
+                        <span style={{ 
+                          color: asset.ai_score >= 80 ? 'var(--success)' : asset.ai_score >= 50 ? 'var(--warning)' : 'var(--danger)',
+                          fontWeight: 'bold' 
+                        }}>
+                          {asset.ai_score}
+                        </span>
+                      ) : 'N/A'}
+                    </div>
+                    {(asset.reason || asset.ai_analysis) && (
+                      <button 
+                        style={{ 
+                          background: 'none', border: 'none', color: 'var(--accent-color, #6366f1)', 
+                          padding: 0, textDecoration: 'underline', fontSize: '0.75rem', cursor: 'pointer',
+                          marginTop: '0.25rem', display: 'block'
+                        }}
+                        onClick={() => setSelectedAsset(asset)}
+                      >
+                        查看評核回饋
+                      </button>
+                    )}
                   </td>
                   <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                     {new Date(asset.created_at).toLocaleString()}
@@ -138,10 +181,41 @@ export default function AssetManager() {
                   <td style={{ padding: '1rem' }}>
                     {asset.is_archived ? (
                       <div>
-                        <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>✅ 已歸檔上架</span>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                          名稱: {asset.title} | 售價: {asset.required_points} 點 | 分類: {asset.asset_type}
-                        </div>
+                        {asset.is_published !== false ? (
+                          <div>
+                            <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>✅ 已歸檔上架</span>
+                            {asset.no_ai_review && <span style={{ fontSize: '0.75rem', color: 'var(--warning)', marginLeft: '0.5rem' }}>(無AI審閱)</span>}
+                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                              名稱: {asset.title} | 售價: {asset.required_points} 點 | 分類: {asset.asset_type}
+                            </div>
+                            {user?.role !== 'PLATFORM_ADMIN' && (
+                              <button 
+                                className="danger" 
+                                onClick={() => handleTogglePublish(asset.asset_id)}
+                                style={{ marginTop: '0.5rem', padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
+                              >
+                                🔴 下架 (暫停銷售)
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>❌ 已下架暫停銷售</span>
+                            {asset.no_ai_review && <span style={{ fontSize: '0.75rem', color: 'var(--warning)', marginLeft: '0.5rem' }}>(無AI審閱)</span>}
+                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                              名稱: {asset.title} | 售價: {asset.required_points} 點 | 分類: {asset.asset_type}
+                            </div>
+                            {user?.role !== 'PLATFORM_ADMIN' && (
+                              <button 
+                                className="primary" 
+                                onClick={() => handleTogglePublish(asset.asset_id)}
+                                style={{ marginTop: '0.5rem', padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
+                              >
+                                🟢 重新上架 (免費)
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : user?.role === 'PLATFORM_ADMIN' ? (
                       <div>
@@ -149,36 +223,46 @@ export default function AssetManager() {
                       </div>
                     ) : (
                       editForms[asset.asset_id] && (
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>名稱:</span>
-                          <input 
-                            type="text" 
-                            placeholder="資產名稱"
-                            value={editForms[asset.asset_id].title}
-                            onChange={e => updateForm(asset.asset_id, 'title', e.target.value)}
-                            style={{ width: '150px' }}
-                          />
-                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>售價(點數):</span>
-                          <input 
-                            type="number" 
-                            placeholder="售價"
-                            value={editForms[asset.asset_id].points}
-                            onChange={e => updateForm(asset.asset_id, 'points', e.target.value)}
-                            style={{ width: '80px' }}
-                          />
-                          <select 
-                            value={editForms[asset.asset_id].type}
-                            onChange={e => updateForm(asset.asset_id, 'type', e.target.value)}
-                          >
-                            <option value="IMAGE">素材圖片</option>
-                            <option value="COURSE">線上課程</option>
-                            <option value="GOODS">實體福利品</option>
-                            <option value="VIDEO">企業形象影片</option>
-                            <option value="ECARD">電子賀卡</option>
-                          </select>
-                          <button className="primary" onClick={() => handleArchive(asset.asset_id)}>
-                            歸檔上架 (扣 10 點)
-                          </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-start' }}>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>名稱:</span>
+                            <input 
+                              type="text" 
+                              placeholder="資產名稱"
+                              value={editForms[asset.asset_id].title}
+                              onChange={e => updateForm(asset.asset_id, 'title', e.target.value)}
+                              style={{ width: '150px' }}
+                            />
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>售價(點數):</span>
+                            <input 
+                              type="number" 
+                              placeholder="售價"
+                              value={editForms[asset.asset_id].points}
+                              onChange={e => updateForm(asset.asset_id, 'points', e.target.value)}
+                              style={{ width: '80px' }}
+                            />
+                            <select 
+                              value={editForms[asset.asset_id].type}
+                              onChange={e => updateForm(asset.asset_id, 'type', e.target.value)}
+                            >
+                              <option value="IMAGE">素材圖片</option>
+                              <option value="COURSE">線上課程</option>
+                              <option value="GOODS">實體福利品</option>
+                              <option value="VIDEO">企業形象影片</option>
+                              <option value="ECARD">電子賀卡</option>
+                            </select>
+                            <button className="primary" onClick={() => handleArchive(asset.asset_id)}>
+                              歸檔上架 (扣 10 點)
+                            </button>
+                          </div>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.85rem', color: 'var(--text-secondary)', cursor: 'pointer', marginTop: '0.25rem' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={!!overrideAi[asset.asset_id]} 
+                              onChange={e => setOverrideAi(prev => ({ ...prev, [asset.asset_id]: e.target.checked }))} 
+                            />
+                            不同意 AI 評核，強制上架（將註記無 AI 審閱，仍需扣除 10 點）
+                          </label>
                         </div>
                       )
                     )}
@@ -192,6 +276,53 @@ export default function AssetManager() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* AI Feedback Details Modal */}
+      {selectedAsset && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15,23,42,0.85)', backdropFilter: 'blur(8px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }} onClick={() => setSelectedAsset(null)}>
+          <div style={{
+            background: '#0f172a', border: '1px solid var(--glass-border)',
+            borderRadius: '16px', padding: '2rem', maxWidth: '500px', width: '90%',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+            display: 'flex', flexDirection: 'column', gap: '1rem'
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--accent-color)' }}>AI 評估回饋報告</h3>
+            <div style={{ color: 'var(--text-primary)' }}>
+              <strong>資產標題:</strong> {selectedAsset.title || '未命名'}
+            </div>
+            <div style={{ color: 'var(--text-primary)' }}>
+              <strong>AI 評分:</strong> {selectedAsset.no_ai_review ? '無AI審閱' : (selectedAsset.ai_score !== null ? `${selectedAsset.ai_score} 分` : '審閱中')}
+            </div>
+            <div style={{ color: 'var(--text-primary)' }}>
+              <strong>AI 審核建議/原因:</strong>
+              <p style={{ 
+                background: 'rgba(255,255,255,0.05)', padding: '0.75rem', borderRadius: '8px', 
+                marginTop: '0.25rem', fontSize: '0.9rem', lineHeight: '1.5', color: 'var(--text-primary)'
+              }}>
+                {selectedAsset.reason || '無審核原因'}
+              </p>
+            </div>
+            {selectedAsset.ai_analysis && (
+              <div style={{ color: 'var(--text-primary)' }}>
+                <strong>AI 摘要分析:</strong>
+                <p style={{ 
+                  background: 'rgba(255,255,255,0.05)', padding: '0.75rem', borderRadius: '8px', 
+                  marginTop: '0.25rem', fontSize: '0.9rem', lineHeight: '1.5', color: 'var(--text-primary)'
+                }}>
+                  {selectedAsset.ai_analysis}
+                </p>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="primary" onClick={() => setSelectedAsset(null)}>關閉</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

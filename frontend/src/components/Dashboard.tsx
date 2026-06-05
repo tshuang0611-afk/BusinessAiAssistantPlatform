@@ -14,6 +14,7 @@ interface Asset {
   title: string;
   content_url: string;
   required_points: number; // 假設後端有回傳這欄位
+  no_ai_review?: boolean;
 }
 
 // Icons mapping based on type
@@ -245,9 +246,20 @@ export default function Dashboard() {
               {/* Image Preview Container */}
               <div style={{ height: '200px', width: '100%', background: '#1e293b', position: 'relative' }}>
                 <PreviewImage url={asset.content_url} title={asset.title} />
-                <div style={{ position: 'absolute', top: '10px', right: '10px' }} className={`score-badge ${scoreClass}`} title="AI 評分">
-                  {asset.ai_score || 0}
-                </div>
+                {asset.no_ai_review ? (
+                  <div style={{ 
+                    position: 'absolute', top: '10px', right: '10px',
+                    background: 'rgba(148, 163, 184, 0.2)', color: '#cbd5e1', 
+                    border: '2px solid #94a3b8', padding: '4px 10px', 
+                    borderRadius: '8px', fontSize: '0.75rem', fontWeight: 'bold' 
+                  }} title="無 AI 審閱">
+                    無AI審閱
+                  </div>
+                ) : (
+                  <div style={{ position: 'absolute', top: '10px', right: '10px' }} className={`score-badge ${scoreClass}`} title="AI 評分">
+                    {asset.ai_score || 0}
+                  </div>
+                )}
               </div>
 
               {/* Content Container */}

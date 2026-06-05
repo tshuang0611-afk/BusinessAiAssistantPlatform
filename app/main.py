@@ -335,7 +335,10 @@ def init_db():
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             processed_at    TIMESTAMP
         )
-    """)
+     """)
+
+    cur.execute("ALTER TABLE assets_log ADD COLUMN IF NOT EXISTS no_ai_review BOOLEAN DEFAULT FALSE")
+    cur.execute("ALTER TABLE assets_log ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT TRUE")
 
     # 確保測試企業存在（避免外鍵衝突）
     cur.execute("SELECT enterprise_id FROM enterprises WHERE enterprise_id = %s::uuid", (TEST_ENTERPRISE_ID,))
@@ -383,6 +386,7 @@ class ArchiveRequest(BaseModel):
     asset_type: str
     title: str
     required_points: float = 0.00
+    no_ai_review: bool = False
 
 class TopUpRequest(BaseModel):
     amount: float
@@ -780,7 +784,8 @@ async def archive_asset(log_id: str, req: ArchiveRequest, current_user = Depends
                     
         cur.execute("UPDATE assets SET asset_type = %s, title = %s, required_points = %s WHERE asset_id = %s::uuid", 
                     (req.asset_type, req.title, req.required_points, log_id))
-        cur.execute("UPDATE assets_log SET is_archived = true, asset_type = %s WHERE asset_id = %s::uuid", (req.asset_type, log_id))
+        cur.execute("UPDATE assets_log SET is_archived = true, asset_type = %s, no_ai_review = %s WHERE asset_id = %s::uuid", 
+                    (req.asset_type, req.no_ai_review, log_id))
         conn.commit()
         return {"status": "success", "message": "歸檔成功並已扣除 AI 手續費"}
     except HTTPException: raise
@@ -826,8 +831,10 @@ async def get_assets():
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("""SELECT l.asset_id, l.ai_score, l.ai_tags, l.ai_analysis, l.is_archived, l.asset_type, a.title, a.content_url, a.required_points 
-                       FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id WHERE l.is_archived = true ORDER BY l.created_at DESC""")
+        cur.execute("""SELECT l.asset_id, l.ai_score, l.ai_tags, l.ai_analysis, l.is_archived, l.asset_type, a.title, a.content_url, a.required_points, l.no_ai_review 
+                       FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id 
+                       WHERE l.is_archived = true AND l.is_published = true 
+                       ORDER BY l.created_at DESC""")
         return {"status": "success", "data": cur.fetchall()}
     finally: cur.close(); conn.close()
 
@@ -840,18 +847,43 @@ async def manage_assets(current_user = Depends(require_enterprise_admin)):
     try:
         if role == "PLATFORM_ADMIN":
             cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at,
-                                  e.company_name as owner_name 
+                                  l.reason, l.ai_analysis, l.no_ai_review, l.is_published, e.company_name as owner_name 
                            FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id 
                            LEFT JOIN enterprises e ON a.owner_enterprise_id = e.enterprise_id 
                            ORDER BY l.created_at DESC""")
         else:
             cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at,
-                                  e.company_name as owner_name 
+                                  l.reason, l.ai_analysis, l.no_ai_review, l.is_published, e.company_name as owner_name 
                            FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id 
                            LEFT JOIN enterprises e ON a.owner_enterprise_id = e.enterprise_id 
                            WHERE a.owner_enterprise_id = %s::uuid ORDER BY l.created_at DESC""", (ent_id,))
         return {"status": "success", "data": cur.fetchall()}
     finally: cur.close(); conn.close()
+
+@app.post("/api/assets/{asset_id}/toggle-publish")
+async def toggle_publish(asset_id: str, current_user = Depends(require_enterprise_admin)):
+    role = current_user.get("role")
+    ent_id = current_user.get("enterprise_id")
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if role == "PLATFORM_ADMIN":
+            raise HTTPException(status_code=403, detail="平台管理者不應介入此功能運作")
+        # 檢查該資產是否屬於該企業
+        cur.execute("SELECT owner_enterprise_id FROM assets WHERE asset_id = %s::uuid", (asset_id,))
+        asset = cur.fetchone()
+        if not asset or str(asset['owner_enterprise_id']) != ent_id:
+            raise HTTPException(status_code=403, detail="無權限操作此資產")
+            
+        cur.execute("UPDATE assets_log SET is_published = NOT COALESCE(is_published, true) WHERE asset_id = %s RETURNING is_published", (asset_id,))
+        new_state = cur.fetchone()['is_published']
+        conn.commit()
+        return {"status": "success", "is_published": new_state}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close(); conn.close()
 
 @app.get("/api/transactions")
 async def get_transactions(current_user = Depends(require_platform_admin)):
