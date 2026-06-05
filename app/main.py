@@ -8,7 +8,7 @@ import psycopg2.extras
 from psycopg2.extras import RealDictCursor
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
