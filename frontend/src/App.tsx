@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Dashboard from './components/Dashboard'
 import Wallet from './components/Wallet'
 import Login from './components/Login'
@@ -39,6 +39,22 @@ function MainApp() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const { user, logout, token } = useAuth()
   const isMobile = useMediaQuery('(max-width: 768px)')
+  const [walletBalance, setWalletBalance] = useState<number | null>(null)
+
+  const fetchWalletBalance = useCallback(async () => {
+    if (!token || user?.role !== 'ENTERPRISE_USER') return
+    try {
+      const res = await fetch(`${API}/api/wallets/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setWalletBalance(typeof data.balance === 'number' ? data.balance : parseFloat(data.balance) || 0)
+      }
+    } catch (e) { /* silent */ }
+  }, [token, user?.role])
+
+  useEffect(() => { fetchWalletBalance() }, [fetchWalletBalance])
 
   useEffect(() => {
     if (user?.role === 'PLATFORM_ADMIN' && token) {
@@ -113,6 +129,27 @@ function MainApp() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <NotificationBell />
+          {/* 錢包餘額 - 僅企業一般使用者 */}
+          {user?.role === 'ENTERPRISE_USER' && walletBalance !== null && (
+            <div
+              title="我的點數錢包"
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                background: 'rgba(251,191,36,0.12)',
+                border: '1.5px solid rgba(251,191,36,0.45)',
+                borderRadius: '20px',
+                padding: '0.3rem 0.85rem',
+                fontSize: '0.82rem',
+                fontWeight: 700,
+                color: '#fbbf24',
+                cursor: 'default',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <WalletIcon size={14} />
+              <span>{walletBalance.toLocaleString()} 點</span>
+            </div>
+          )}
           {!isMobile && (
             <div style={{ textAlign: 'right', borderLeft: '1px solid var(--glass-border)', paddingLeft: '0.75rem' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{roleLabels[user.role]}</div>

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon, Search, X, Wallet, AlertTriangle } from 'lucide-react'
+import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon, Search, X } from 'lucide-react'
 import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
@@ -260,30 +260,6 @@ export default function Dashboard() {
           <p style={{ margin: '0.3rem 0 0', color: 'var(--text-secondary)' }}>瀏覽由平台會員貢獻並經過 Gemini AI 評分驗證的數位資產。</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-          {/* 錢包餘額顯示（僅限企業一般使用者） */}
-          {user?.role === 'ENTERPRISE_USER' && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '0.5rem',
-              background: 'rgba(99,102,241,0.12)',
-              border: '1.5px solid rgba(99,102,241,0.35)',
-              borderRadius: '12px',
-              padding: '0.45rem 1rem',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              color: walletBalance !== null && walletBalance < 50 ? '#f59e0b' : 'var(--accent-color)',
-              whiteSpace: 'nowrap',
-              minWidth: '120px',
-            }}>
-              <Wallet size={16} />
-              <span>錢包：</span>
-              <span style={{ fontSize: '1rem' }}>
-                {walletBalance === null ? '—' : `${walletBalance.toLocaleString()} 點`}
-              </span>
-              {walletBalance !== null && walletBalance < 50 && (
-                <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              )}
-            </div>
-          )}
           <div style={{ position: 'relative', minWidth: '240px' }}>
             <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋資產名稱或描述..." style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }} />
