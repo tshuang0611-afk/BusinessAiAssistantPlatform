@@ -278,11 +278,11 @@ export default function AICreator() {
             <select
               value={selectedAsset}
               onChange={e => setSelectedAsset(e.target.value)}
-              style={{ width: '100%', padding: '0.65rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.9rem' }}
+              style={{ width: '100%', padding: '0.65rem', background: 'rgba(15, 23, 42, 0.95)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.9rem' }}
             >
-              <option value="">不選擇素材（純文字生成）</option>
+              <option value="" style={{ background: '#1e293b', color: '#f8fafc' }}>不選擇素材（純文字生成）</option>
               {assets.map(a => (
-                <option key={a.asset_id} value={a.asset_id}>{a.title}</option>
+                <option key={a.asset_id} value={a.asset_id} style={{ background: '#1e293b', color: '#f8fafc' }}>{a.title}</option>
               ))}
             </select>
           </div>

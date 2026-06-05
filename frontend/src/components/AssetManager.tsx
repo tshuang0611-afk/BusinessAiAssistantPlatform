@@ -32,11 +32,16 @@ const PreviewImage = ({ url, title }: { url: string | null | undefined, title: s
     )
   }
 
-  // If GCS or absolute URL, use directly. Otherwise extract filename.
+  // If GCS or absolute URL, use directly. Otherwise replace /uploads/ with /static/ for local files.
   let src = url;
-  if (!url.startsWith('http')) {
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    src = url;
+  } else if (url.startsWith('/uploads/')) {
+    src = `${API}${url.replace('/uploads/', '/static/')}`;
+  } else {
+    // Fallback logic
     const filename = url.split('/').pop() || url.split('\\').pop();
-    src = `${API}/static/done/${filename}`;
+    src = `${API}/static/materials/${filename}`;
   }
 
   return (
@@ -278,12 +283,13 @@ export default function AssetManager() {
                             <select 
                               value={editForms[asset.asset_id].type}
                               onChange={e => updateForm(asset.asset_id, 'type', e.target.value)}
+                              style={{ background: 'rgba(15, 23, 42, 0.95)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', padding: '0.4rem', borderRadius: '8px' }}
                             >
-                              <option value="IMAGE">素材圖片</option>
-                              <option value="COURSE">線上課程</option>
-                              <option value="GOODS">實體福利品</option>
-                              <option value="VIDEO">企業形象影片</option>
-                              <option value="ECARD">電子賀卡</option>
+                              <option value="IMAGE" style={{ background: '#1e293b', color: '#f8fafc' }}>素材圖片</option>
+                              <option value="COURSE" style={{ background: '#1e293b', color: '#f8fafc' }}>線上課程</option>
+                              <option value="GOODS" style={{ background: '#1e293b', color: '#f8fafc' }}>實體福利品</option>
+                              <option value="VIDEO" style={{ background: '#1e293b', color: '#f8fafc' }}>企業形象影片</option>
+                              <option value="ECARD" style={{ background: '#1e293b', color: '#f8fafc' }}>電子賀卡</option>
                             </select>
                             <button className="primary" onClick={() => handleArchive(asset.asset_id)}>
                               歸檔上架 (扣 10 點)

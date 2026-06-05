@@ -41,8 +41,17 @@ const PreviewImage = ({ url, title }: { url: string | null | undefined, title: s
     )
   }
 
-  const filename = url.split('/').pop();
-  const src = `${API}/static/done/${filename}`;
+  // If GCS or absolute URL, use directly. Otherwise replace /uploads/ with /static/ for local files.
+  let src = url;
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    src = url;
+  } else if (url.startsWith('/uploads/')) {
+    src = `${API}${url.replace('/uploads/', '/static/')}`;
+  } else {
+    // Fallback logic
+    const filename = url.split('/').pop() || url.split('\\').pop();
+    src = `${API}/static/materials/${filename}`;
+  }
 
   return (
     <img 

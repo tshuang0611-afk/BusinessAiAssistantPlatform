@@ -4,6 +4,23 @@ import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
+const resolveImageUrl = (url: string | null | undefined) => {
+  if (!url || url.trim() === '') return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  if (url.startsWith('/uploads/')) {
+    return `${API}${url.replace('/uploads/', '/static/')}`;
+  }
+  if (url.includes('/') || url.includes('\\')) {
+    const normalized = url.replace(/\\/g, '/');
+    const path = normalized.startsWith('/') ? normalized : `/${normalized}`;
+    return `${API}/static${path}`;
+  }
+  const filename = url.split('/').pop() || url.split('\\').pop();
+  return `${API}/static/done/${filename}`;
+}
+
 interface Benefit {
   benefit_id: string
   enterprise_id: string
@@ -214,12 +231,12 @@ export default function BenefitStore() {
         {filtered.map(b => {
           const canAfford = myPoints >= b.price_points
           const isRedeemable = user?.role === 'ENTERPRISE_USER'
-          const imgFilename = b.image_url?.split(/[\\\/]/).pop()
+          const imgUrl = resolveImageUrl(b.image_url)
           return (
             <div key={b.benefit_id} className="glass-panel" style={{ display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
               <div style={{ height: '160px', background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                {imgFilename
-                  ? <img src={`${API}/static/done/${imgFilename}`} alt={b.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                {imgUrl
+                  ? <img src={imgUrl} alt={b.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                   : <Gift size={48} color="rgba(255,255,255,0.15)" />}
               </div>
               <div style={{ padding: '1.25rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

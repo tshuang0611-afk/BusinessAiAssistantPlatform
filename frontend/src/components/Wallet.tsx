@@ -299,9 +299,9 @@ export default function Wallet() {
                   <div>
                     <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>銀行</label>
                     <select value={bankCode} onChange={e => { setBankCode(e.target.value); setBankName(TW_BANKS.find(b => b.code === e.target.value)?.name || '') }}
-                      style={{ width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '0.6rem', color: 'var(--text-primary)' }}>
-                      <option value="">選擇銀行</option>
-                      {TW_BANKS.map(b => <option key={b.code} value={b.code}>{b.code} {b.name}</option>)}
+                      style={{ width: '100%', background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '0.6rem', color: 'var(--text-primary)' }}>
+                      <option value="" style={{ background: '#1e293b', color: '#f8fafc' }}>選擇銀行</option>
+                      {TW_BANKS.map(b => <option key={b.code} value={b.code} style={{ background: '#1e293b', color: '#f8fafc' }}>{b.code} {b.name}</option>)}
                     </select>
                   </div>
                   <div>

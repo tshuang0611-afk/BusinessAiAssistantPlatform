@@ -82,10 +82,10 @@ export default function PointDistribution() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
             <div>
               <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>選擇員工</label>
-              <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)} style={{ width: '100%', padding: '0.6rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-primary)' }}>
-                <option value="">-- 請選擇 --</option>
+              <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)} style={{ width: '100%', padding: '0.6rem', background: 'rgba(15, 23, 42, 0.95)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-primary)' }}>
+                <option value="" style={{ background: '#1e293b', color: '#f8fafc' }}>-- 請選擇 --</option>
                 {members.filter(m => m.user_role !== 'PLATFORM_ADMIN').map(m => (
-                  <option key={m.user_id} value={m.user_id}>{m.username} ({ROLE_LABEL[m.user_role] || m.user_role}) — {m.personal_points} pts</option>
+                  <option key={m.user_id} value={m.user_id} style={{ background: '#1e293b', color: '#f8fafc' }}>{m.username} ({ROLE_LABEL[m.user_role] || m.user_role}) — {m.personal_points} pts</option>
                 ))}
               </select>
             </div>
