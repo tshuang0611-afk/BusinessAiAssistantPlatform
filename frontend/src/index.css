@@ -282,3 +282,9 @@ p {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* Fix select dropdown option styling on Chrome/Edge Windows */
+select option {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+}

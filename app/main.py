@@ -846,13 +846,13 @@ async def manage_assets(current_user = Depends(require_enterprise_admin)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         if role == "PLATFORM_ADMIN":
-            cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at,
+            cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at, a.content_url,
                                   l.reason, l.ai_analysis, l.no_ai_review, l.is_published, e.company_name as owner_name 
                            FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id 
                            LEFT JOIN enterprises e ON a.owner_enterprise_id = e.enterprise_id 
                            ORDER BY l.created_at DESC""")
         else:
-            cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at,
+            cur.execute("""SELECT l.asset_id, l.ai_metadata, l.is_archived, l.asset_type, a.title, a.required_points, l.ai_score, l.created_at, a.content_url,
                                   l.reason, l.ai_analysis, l.no_ai_review, l.is_published, e.company_name as owner_name 
                            FROM assets_log l JOIN assets a ON l.asset_id::uuid = a.asset_id 
                            LEFT JOIN enterprises e ON a.owner_enterprise_id = e.enterprise_id 

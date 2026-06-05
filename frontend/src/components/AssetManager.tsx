@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Image as ImageIcon } from 'lucide-react'
 import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
@@ -17,6 +18,35 @@ interface ManageAsset {
   is_published?: boolean;
   reason?: string | null;
   ai_analysis?: string | null;
+  content_url?: string | null;
+}
+
+const PreviewImage = ({ url, title }: { url: string | null | undefined, title: string }) => {
+  const [error, setError] = useState(false)
+  
+  if (!url || error || url.trim() === '') {
+    return (
+      <div style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a', color: '#475569', borderRadius: '8px' }}>
+        <ImageIcon size={20} opacity={0.5} />
+      </div>
+    )
+  }
+
+  // If GCS or absolute URL, use directly. Otherwise extract filename.
+  let src = url;
+  if (!url.startsWith('http')) {
+    const filename = url.split('/').pop() || url.split('\\').pop();
+    src = `${API}/static/done/${filename}`;
+  }
+
+  return (
+    <img 
+      src={src} 
+      alt={title} 
+      style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--glass-border)' }}
+      onError={() => setError(true)}
+    />
+  )
 }
 
 export default function AssetManager() {
@@ -136,6 +166,7 @@ export default function AssetManager() {
             <thead>
               <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
                 <th style={{ padding: '1rem' }}>ID</th>
+                <th style={{ padding: '1rem' }}>預覽</th>
                 {user?.role === 'PLATFORM_ADMIN' && <th style={{ padding: '1rem' }}>上傳來源</th>}
                 <th style={{ padding: '1rem' }}>AI 評分</th>
                 <th style={{ padding: '1rem' }}>建立時間</th>
@@ -146,6 +177,9 @@ export default function AssetManager() {
               {assets.map(asset => (
                 <tr key={asset.asset_id} style={{ borderBottom: '1px solid var(--glass-border)' }}>
                   <td style={{ padding: '1rem', fontFamily: 'monospace' }}>{asset.asset_id.substring(0,8)}</td>
+                  <td style={{ padding: '0.5rem 1rem' }}>
+                    <PreviewImage url={asset.content_url} title={asset.title || ''} />
+                  </td>
                   {user?.role === 'PLATFORM_ADMIN' && (
                     <td style={{ padding: '1rem', fontWeight: '500' }}>{asset.owner_name || '個人上傳'}</td>
                   )}
@@ -271,7 +305,7 @@ export default function AssetManager() {
               ))}
               {assets.length === 0 && (
                 <tr>
-                  <td colSpan={user?.role === 'PLATFORM_ADMIN' ? 5 : 4} style={{ textAlign: 'center', padding: '2rem' }}>尚無任何資產資料</td>
+                  <td colSpan={user?.role === 'PLATFORM_ADMIN' ? 6 : 5} style={{ textAlign: 'center', padding: '2rem' }}>尚無任何資產資料</td>
                 </tr>
               )}
             </tbody>
