@@ -32,16 +32,20 @@ const PreviewImage = ({ url, title }: { url: string | null | undefined, title: s
     )
   }
 
-  // If GCS or absolute URL, use directly. Otherwise replace /uploads/ with /static/ for local files.
+  // If GCS or absolute URL, use directly. Otherwise map /uploads/ or /app/uploads/ to /static/ correctly.
   let src = url;
   if (url.startsWith('http://') || url.startsWith('https://')) {
     src = url;
-  } else if (url.startsWith('/uploads/')) {
-    src = `${API}${url.replace('/uploads/', '/static/')}`;
+  } else if (url.includes('/uploads/')) {
+    const parts = url.split('/uploads/');
+    src = `${API}/static/${parts[1]}`;
+  } else if (url.includes('/') || url.includes('\\')) {
+    const normalized = url.replace(/\\/g, '/');
+    const path = normalized.startsWith('/') ? normalized : `/${normalized}`;
+    src = `${API}/static${path}`;
   } else {
-    // Fallback logic
     const filename = url.split('/').pop() || url.split('\\').pop();
-    src = `${API}/static/materials/${filename}`;
+    src = `${API}/static/${filename}`;
   }
 
   return (
