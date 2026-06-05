@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon, Search, X } from 'lucide-react'
+import { useEffect, useState, useCallback } from 'react'
+import { Tag, Image as ImageIcon, Video, ShoppingCart, BookOpen, Mail, Download, Play, Truck, Link as LinkIcon, Search, X, Wallet, AlertTriangle } from 'lucide-react'
 import { useAuth } from  '../contexts/AuthContext'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
@@ -72,10 +72,13 @@ export default function Dashboard() {
   const { user, token } = useAuth()
   const [assets, setAssets] = useState<Asset[]>([])
   const [loading, setLoading] = useState(true)
+  const [walletBalance, setWalletBalance] = useState<number | null>(null)
   const [purchasedIds, setPurchasedIds] = useState<string[]>([])
   const [purchasingId, setPurchasingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('')
+  const [showInsufficientModal, setShowInsufficientModal] = useState(false)
+  const [pendingAsset, setPendingAsset] = useState<Asset | null>(null)
   
   // Modals state
   const [showShippingModal, setShowShippingModal] = useState(false)
@@ -84,6 +87,22 @@ export default function Dashboard() {
   
   // Logistics form state
   const [logisticsForm, setLogisticsForm] = useState({ name: '', address: '', phone: '' })
+
+  // 取得錢包餘額
+  const fetchWallet = useCallback(async () => {
+    if (!token || user?.role !== 'ENTERPRISE_USER') return
+    try {
+      const res = await fetch(`${API}/api/wallets/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setWalletBalance(typeof data.balance === 'number' ? data.balance : parseFloat(data.balance) || 0)
+      }
+    } catch (e) {
+      console.error('錢包餘額取得失敗', e)
+    }
+  }, [token, user?.role])
 
   useEffect(() => {
     const url = search || filterType
@@ -104,7 +123,16 @@ export default function Dashboard() {
     if (saved) setPurchasedIds(JSON.parse(saved))
   }, [search, filterType])
 
+  useEffect(() => { fetchWallet() }, [fetchWallet])
+
   const handlePurchase = async (asset: Asset) => {
+    // 防呆：先確認餘額
+    if (walletBalance !== null && walletBalance < asset.required_points) {
+      setPendingAsset(asset)
+      setShowInsufficientModal(true)
+      return
+    }
+
     if (!confirm(`確定要花費 ${asset.required_points} 點購買「${asset.title}」的授權嗎？`)) return;
     
     setPurchasingId(asset.asset_id)
@@ -123,6 +151,8 @@ export default function Dashboard() {
         const newPurchased = [...purchasedIds, asset.asset_id]
         setPurchasedIds(newPurchased)
         localStorage.setItem('caxn_purchased', JSON.stringify(newPurchased))
+        // 購買成功後重新取得餘額
+        fetchWallet()
       } else {
         alert(`❌ 購買失敗：${result.detail || '未知錯誤'}`)
       }
@@ -229,10 +259,36 @@ export default function Dashboard() {
           <h2 style={{ margin: 0 }}>資產大廳</h2>
           <p style={{ margin: '0.3rem 0 0', color: 'var(--text-secondary)' }}>瀏覽由平台會員貢獻並經過 Gemini AI 評分驗證的數位資產。</p>
         </div>
-        <div style={{ position: 'relative', minWidth: '240px' }}>
-          <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋資產名稱或描述..." style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }} />
-          {search && <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={14} /></button>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          {/* 錢包餘額顯示（僅限企業一般使用者） */}
+          {user?.role === 'ENTERPRISE_USER' && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '0.5rem',
+              background: 'rgba(99,102,241,0.12)',
+              border: '1.5px solid rgba(99,102,241,0.35)',
+              borderRadius: '12px',
+              padding: '0.45rem 1rem',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              color: walletBalance !== null && walletBalance < 50 ? '#f59e0b' : 'var(--accent-color)',
+              whiteSpace: 'nowrap',
+              minWidth: '120px',
+            }}>
+              <Wallet size={16} />
+              <span>錢包：</span>
+              <span style={{ fontSize: '1rem' }}>
+                {walletBalance === null ? '—' : `${walletBalance.toLocaleString()} 點`}
+              </span>
+              {walletBalance !== null && walletBalance < 50 && (
+                <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
+              )}
+            </div>
+          )}
+          <div style={{ position: 'relative', minWidth: '240px' }}>
+            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋資產名稱或描述..." style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }} />
+            {search && <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><X size={14} /></button>}
+          </div>
         </div>
       </div>
 
@@ -350,7 +406,43 @@ export default function Dashboard() {
       </div>
       {assets.length === 0 && <p>目前沒有任何資產。</p>}
 
-      {/* --- Modals --- */}
+      {/* --- 餘額不足 Modal --- */}
+      {showInsufficientModal && pendingAsset && (
+        <div style={modalOverlayStyle}>
+          <div className="glass-panel" style={{ ...modalContentStyle, textAlign: 'center' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>💰</div>
+            <h3 style={{ margin: '0 0 0.75rem', color: '#f59e0b' }}>點數餘額不足</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+              購買「<strong style={{ color: 'var(--text-primary)' }}>{pendingAsset.title}</strong>」需要
+              <strong style={{ color: 'var(--accent-color)' }}> {pendingAsset.required_points} 點</strong>，
+            </p>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+              您目前餘額為 <strong style={{ color: '#f59e0b' }}>{walletBalance?.toLocaleString() ?? 0} 點</strong>，
+              尚差 <strong style={{ color: '#ef4444' }}>{((pendingAsset.required_points || 0) - (walletBalance || 0)).toLocaleString()} 點</strong>。
+            </p>
+            <div style={{
+              background: 'rgba(245,158,11,0.08)',
+              border: '1px solid rgba(245,158,11,0.3)',
+              borderRadius: '10px',
+              padding: '0.75rem 1rem',
+              marginBottom: '1.5rem',
+              fontSize: '0.875rem',
+              color: '#fbbf24'
+            }}>
+              💡 請聯繫您的企業管理員為帳戶儲值點數，或至「點數錢包」頁面查看儲值說明。
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+              <button
+                className="primary"
+                onClick={() => { setShowInsufficientModal(false); setPendingAsset(null) }}
+              >
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showShippingModal && (
         <div style={modalOverlayStyle}>
           <div className="glass-panel" style={modalContentStyle}>
